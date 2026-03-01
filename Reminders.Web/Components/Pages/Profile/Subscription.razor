@@ -79,8 +79,12 @@
     async Task Upgrade()
     {
         if (currentUser == null) return;
-        var url = await SubSvc.CreateCheckoutSessionAsync(currentUser, 2);
-        // TODO: Redirect to Stripe checkout URL when real credentials provided
+        var baseUrl = "https://localhost:5001";
+        var url = await SubSvc.CreateCheckoutSessionAsync(currentUser, 1, $"{baseUrl}/profile/subscription?success=true", $"{baseUrl}/profile/subscription?cancelled=true");
+        if (!string.IsNullOrEmpty(url))
+        {
+            // Redirect to Stripe checkout
+        }
     }
 
     void CancelSubscription()

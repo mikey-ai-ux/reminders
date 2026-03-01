@@ -1,0 +1,13 @@
+C:\github\reminders\Reminders.Models\bin\Release\net8.0\Reminders.Models.deps.json
+C:\github\reminders\Reminders.Models\bin\Release\net8.0\Reminders.Models.dll
+C:\github\reminders\Reminders.Models\bin\Release\net8.0\Reminders.Models.pdb
+C:\github\reminders\Reminders.Models\obj\Release\net8.0\Reminders.Models.csproj.AssemblyReference.cache
+C:\github\reminders\Reminders.Models\obj\Release\net8.0\Reminders.Models.GeneratedMSBuildEditorConfig.editorconfig
+C:\github\reminders\Reminders.Models\obj\Release\net8.0\Reminders.Models.AssemblyInfoInputs.cache
+C:\github\reminders\Reminders.Models\obj\Release\net8.0\Reminders.Models.AssemblyInfo.cs
+C:\github\reminders\Reminders.Models\obj\Release\net8.0\Reminders.Models.csproj.CoreCompileInputs.cache
+C:\github\reminders\Reminders.Models\obj\Release\net8.0\Reminders.Models.sourcelink.json
+C:\github\reminders\Reminders.Models\obj\Release\net8.0\Reminders.Models.dll
+C:\github\reminders\Reminders.Models\obj\Release\net8.0\refint\Reminders.Models.dll
+C:\github\reminders\Reminders.Models\obj\Release\net8.0\Reminders.Models.pdb
+C:\github\reminders\Reminders.Models\obj\Release\net8.0\ref\Reminders.Models.dll
