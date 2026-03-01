@@ -1,0 +1,220 @@
+@inject IReminderService ReminderSvc
+@inject ISubscriptionService SubSvc
+
+<div class="form-modal">
+    <div class="form-modal-header">
+        <h2>@(isEdit ? "Edit Reminder" : "New Reminder")</h2>
+        <button class="btn-icon" @onclick="OnCancel">✕</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-error">@errorMessage</div>
+    }
+
+    <EditForm Model="model" OnValidSubmit="HandleSubmit">
+        <DataAnnotationsValidator />
+
+        <div class="form-group">
+            <label>Name *</label>
+            <InputText @bind-Value="model.Name" class="form-input" placeholder="e.g. Team standup" />
+            <ValidationMessage For="() => model.Name" />
+        </div>
+
+        <div class="form-group">
+            <label>Description</label>
+            <InputTextArea @bind-Value="model.Description" class="form-input form-textarea" placeholder="Optional description..." rows="2" />
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label>Date &amp; Time *</label>
+                <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="model.OccursAt" class="form-input" />
+                <ValidationMessage For="() => model.OccursAt" />
+            </div>
+            <div class="form-group">
+                <label>Timezone</label>
+                <InputSelect @bind-Value="model.TimeZoneId" class="form-input">
+                    @foreach (var tz in CommonTimezones)
+                    {
+                        <option value="@tz.Id">@tz.DisplayName</option>
+                    }
+                </InputSelect>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Recurring</label>
+            <InputSelect @bind-Value="model.RecurringInterval" class="form-input">
+                <option value="None">None (one-time)</option>
+                <option value="Daily">Daily</option>
+                <option value="Weekly">Weekly</option>
+                <option value="Monthly">Monthly</option>
+            </InputSelect>
+        </div>
+
+        <div class="form-group">
+            <label>Notification Channels</label>
+            <div class="channel-checkboxes">
+                @foreach (var ch in Enum.GetValues<NotificationChannel>())
+                {
+                    var allowed = CurrentUser != null && SubSvc.IsChannelAllowed(CurrentUser, ch);
+                    <label class="channel-option @(allowed ? "" : "disabled")" title="@(allowed ? "" : "Upgrade to Pro to unlock")">
+                        <input type="checkbox"
+                               checked="@model.Channels.Contains(ch)"
+                               disabled="@(!allowed)"
+                               @onchange="(e) => ToggleChannel(ch, (bool)(e.Value ?? false))" />
+                        <span>@GetChannelEmoji(ch) @ch</span>
+                        @if (!allowed)
+                        {
+                            <span class="pro-lock">🔒 Pro</span>
+                        }
+                    </label>
+                }
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" @onclick="OnCancel">Cancel</button>
+            <button type="submit" class="btn btn-primary" disabled="@isSaving">
+                @(isSaving ? "Saving..." : isEdit ? "Save Changes" : "Create Reminder")
+            </button>
+        </div>
+    </EditForm>
+</div>
+
+<style>
+.form-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+.form-modal-header h2 { font-size: 1.25rem; font-weight: 700; margin: 0; color: var(--color-text); }
+.btn-icon { background: none; border: none; font-size: 1.1rem; cursor: pointer; color: var(--color-text-muted); padding: 0.25rem; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.form-textarea { resize: vertical; min-height: 60px; }
+.channel-checkboxes { display: flex; flex-direction: column; gap: 0.5rem; }
+.channel-option { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; color: var(--color-text); cursor: pointer; padding: 0.5rem; border-radius: 8px; }
+.channel-option:hover:not(.disabled) { background: var(--color-primary-alpha); }
+.channel-option.disabled { opacity: 0.5; cursor: not-allowed; }
+.pro-lock { font-size: 0.7rem; background: var(--color-primary-alpha); color: var(--color-primary); padding: 1px 6px; border-radius: 10px; margin-left: auto; }
+.form-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+</style>
+
+@code {
+    [Parameter] public Reminder? Reminder { get; set; }
+    [Parameter] public AppUser? CurrentUser { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private ReminderFormModel model = new();
+    private bool isEdit = false;
+    private bool isSaving = false;
+    private string? errorMessage;
+
+    private static readonly (string Id, string DisplayName)[] CommonTimezones =
+    [
+        ("UTC", "UTC"),
+        ("America/Los_Angeles", "Pacific Time (US)"),
+        ("America/Denver", "Mountain Time (US)"),
+        ("America/Chicago", "Central Time (US)"),
+        ("America/New_York", "Eastern Time (US)"),
+        ("Europe/London", "London"),
+        ("Europe/Paris", "Paris / Berlin"),
+        ("Asia/Tokyo", "Tokyo"),
+        ("Asia/Shanghai", "Shanghai"),
+        ("Australia/Sydney", "Sydney"),
+    ];
+
+    protected override void OnParametersSet()
+    {
+        if (Reminder != null)
+        {
+            isEdit = true;
+            model = new ReminderFormModel
+            {
+                Name = Reminder.Name,
+                Description = Reminder.Description,
+                OccursAt = Reminder.OccursAt,
+                TimeZoneId = Reminder.TimeZoneId,
+                RecurringInterval = Reminder.RecurringInterval,
+                Channels = Reminder.Channels.Select(c => c.Channel).ToHashSet()
+            };
+        }
+        else
+        {
+            isEdit = false;
+            model = new ReminderFormModel { OccursAt = DateTime.Now.AddHours(1) };
+        }
+    }
+
+    void ToggleChannel(NotificationChannel ch, bool value)
+    {
+        if (value) model.Channels.Add(ch);
+        else model.Channels.Remove(ch);
+    }
+
+    string GetChannelEmoji(NotificationChannel ch) => ch switch
+    {
+        NotificationChannel.Email => "📧",
+        NotificationChannel.Push => "🔔",
+        NotificationChannel.SMS => "📱",
+        NotificationChannel.Voice => "📞",
+        _ => "🔔"
+    };
+
+    async Task HandleSubmit()
+    {
+        isSaving = true;
+        errorMessage = null;
+        try
+        {
+            if (isEdit && Reminder != null)
+            {
+                Reminder.Name = model.Name;
+                Reminder.Description = model.Description;
+                Reminder.OccursAt = model.OccursAt.ToUniversalTime();
+                Reminder.TimeZoneId = model.TimeZoneId;
+                Reminder.RecurringInterval = model.RecurringInterval;
+                Reminder.Channels.Clear();
+                foreach (var ch in model.Channels)
+                    Reminder.Channels.Add(new ReminderChannel { Channel = ch });
+                await ReminderSvc.UpdateAsync(Reminder);
+            }
+            else
+            {
+                var reminder = new Reminder
+                {
+                    UserId = CurrentUser!.Id,
+                    Name = model.Name,
+                    Description = model.Description,
+                    OccursAt = model.OccursAt.ToUniversalTime(),
+                    TimeZoneId = model.TimeZoneId,
+                    RecurringInterval = model.RecurringInterval,
+                    Channels = model.Channels.Select(ch => new ReminderChannel { Channel = ch }).ToList()
+                };
+                await ReminderSvc.CreateAsync(reminder);
+            }
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "An error occurred: " + ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private class ReminderFormModel
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        [System.ComponentModel.DataAnnotations.MaxLength(200)]
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+
+        [System.ComponentModel.DataAnnotations.Required]
+        public DateTime OccursAt { get; set; } = DateTime.Now.AddHours(1);
+        public string TimeZoneId { get; set; } = "UTC";
+        public string RecurringInterval { get; set; } = "None";
+        public HashSet<NotificationChannel> Channels { get; set; } = new();
+    }
+}
+

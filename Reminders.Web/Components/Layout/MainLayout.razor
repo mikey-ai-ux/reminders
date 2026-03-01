@@ -1,0 +1,13 @@
+@inherits LayoutComponentBase
+
+<div class="app-layout">
+    <NavMenu />
+    <main class="main-content">
+        <div class="container">
+            @Body
+        </div>
+    </main>
+    <footer class="app-footer">
+        <p>&copy; @DateTime.Now.Year Reminders &mdash; All rights reserved</p>
+    </footer>
+</div>

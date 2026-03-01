@@ -1,0 +1,90 @@
+@page "/profile/subscription"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Identity
+@inject UserManager<AppUser> UserManager
+@inject ISubscriptionService SubSvc
+@inject AuthenticationStateProvider AuthStateProvider
+@rendermode InteractiveServer
+
+<PageTitle>Subscription — Reminders</PageTitle>
+
+<div class="tab-content card">
+    <h2>Subscription Management</h2>
+
+    <div class="current-plan">
+        <div class="plan-info">
+            <span class="tier-badge-lg tier-@(currentUser?.SubscriptionTier.ToString().ToLower())">
+                @currentUser?.SubscriptionTier Plan
+            </span>
+            @if (currentUser?.SubscriptionExpiresAt != null)
+            {
+                <p class="expiry">Renews @currentUser.SubscriptionExpiresAt.Value.ToString("MMMM d, yyyy")</p>
+            }
+        </div>
+    </div>
+
+    @if (currentUser?.SubscriptionTier == Reminders.Models.Enums.SubscriptionTier.Free)
+    {
+        <div class="upgrade-cta">
+            <div class="upgrade-content">
+                <h3>Upgrade to Pro</h3>
+                <p>Unlock SMS &amp; Voice notifications, unlimited reminders, and priority support.</p>
+                <ul class="upgrade-perks">
+                    <li>✅ Unlimited reminders</li>
+                    <li>✅ SMS notifications</li>
+                    <li>✅ Voice call reminders</li>
+                    <li>✅ Priority support</li>
+                </ul>
+                <div class="upgrade-price">$9.99<span>/month</span></div>
+            </div>
+            <button class="btn btn-primary btn-lg" @onclick="Upgrade">Upgrade to Pro →</button>
+        </div>
+    }
+    else
+    {
+        <div class="manage-sub">
+            <p class="manage-text">You're on the <strong>Pro plan</strong>. Thank you for supporting Reminders!</p>
+            <button class="btn btn-secondary" @onclick="CancelSubscription">Cancel Subscription</button>
+        </div>
+    }
+</div>
+
+<style>
+.current-plan { display: flex; align-items: center; margin-bottom: 1.5rem; }
+.tier-badge-lg { font-size: 0.9rem; font-weight: 700; padding: 5px 14px; border-radius: 20px; }
+.tier-free { background: var(--color-border); color: var(--color-text-muted); }
+.tier-pro { background: rgba(67,97,238,0.15); color: var(--color-primary); }
+.expiry { color: var(--color-text-muted); font-size: 0.85rem; margin: 0.5rem 0 0; }
+.upgrade-cta { background: var(--color-bg); border: 1px solid var(--color-primary); border-radius: 12px; padding: 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 2rem; flex-wrap: wrap; }
+.upgrade-cta h3 { font-size: 1.1rem; font-weight: 700; color: var(--color-text); margin: 0 0 0.5rem; }
+.upgrade-cta p { color: var(--color-text-muted); font-size: 0.875rem; margin: 0 0 1rem; }
+.upgrade-perks { list-style: none; padding: 0; margin: 0 0 1rem; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.875rem; color: var(--color-text-muted); }
+.upgrade-price { font-size: 1.5rem; font-weight: 800; color: var(--color-text); }
+.upgrade-price span { font-size: 0.9rem; font-weight: 400; color: var(--color-text-muted); }
+.manage-sub { text-align: center; padding: 2rem; }
+.manage-text { color: var(--color-text-muted); margin-bottom: 1.5rem; }
+.tab-content.card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 2rem; }
+.tab-content h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 1.5rem; color: var(--color-text); }
+</style>
+
+@code {
+    private AppUser? currentUser;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        currentUser = await UserManager.GetUserAsync(authState.User);
+    }
+
+    async Task Upgrade()
+    {
+        if (currentUser == null) return;
+        var url = await SubSvc.CreateCheckoutSessionAsync(currentUser, 2);
+        // TODO: Redirect to Stripe checkout URL when real credentials provided
+    }
+
+    void CancelSubscription()
+    {
+        // TODO: Call Stripe to cancel subscription
+    }
+}

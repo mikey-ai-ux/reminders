@@ -1,0 +1,115 @@
+@page "/profile"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Identity
+@inject UserManager<AppUser> UserManager
+@inject AuthenticationStateProvider AuthStateProvider
+@rendermode InteractiveServer
+
+<PageTitle>My Profile — Reminders</PageTitle>
+
+<div class="profile-header">
+    <div class="avatar">@GetInitial()</div>
+    <div class="profile-info">
+        <h1>@(currentUser?.DisplayName ?? currentUser?.Email ?? "User")</h1>
+        <p class="profile-email">@currentUser?.Email</p>
+        <span class="tier-badge tier-@(currentUser?.SubscriptionTier.ToString().ToLower())">
+            @currentUser?.SubscriptionTier Plan
+        </span>
+    </div>
+</div>
+
+<div class="profile-tabs">
+    <button class="tab @(activeTab == "info" ? "active" : "")" @onclick='() => activeTab = "info"'>Registration Info</button>
+    <button class="tab @(activeTab == "sub" ? "active" : "")" @onclick='() => activeTab = "sub"'>Subscription</button>
+    <button class="tab @(activeTab == "history" ? "active" : "")" @onclick='() => activeTab = "history"'>Payment History</button>
+</div>
+
+@if (activeTab == "info")
+{
+    <div class="tab-content card">
+        <h2>Registration Info</h2>
+        @if (!string.IsNullOrEmpty(successMessage)) { <div class="alert alert-success">@successMessage</div> }
+        <EditForm Model="editModel" OnValidSubmit="SaveProfile" FormName="profile-edit">
+            <DataAnnotationsValidator />
+            <div class="form-group">
+                <label>Display Name</label>
+                <InputText @bind-Value="editModel.DisplayName" class="form-input" />
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" value="@currentUser?.Email" class="form-input" disabled />
+            </div>
+            <div class="form-group">
+                <label>Timezone</label>
+                <InputSelect @bind-Value="editModel.TimeZoneId" class="form-input">
+                    <option value="UTC">UTC</option>
+                    <option value="America/Los_Angeles">Pacific Time</option>
+                    <option value="America/New_York">Eastern Time</option>
+                    <option value="Europe/London">London</option>
+                    <option value="Europe/Paris">Paris</option>
+                    <option value="Asia/Tokyo">Tokyo</option>
+                </InputSelect>
+            </div>
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+        </EditForm>
+    </div>
+}
+else if (activeTab == "sub")
+{
+    <Subscription />
+}
+else
+{
+    <PaymentHistory />
+}
+
+<style>
+.profile-header { display: flex; align-items: center; gap: 1.5rem; margin-bottom: 2rem; padding: 2rem; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 16px; }
+.avatar { width: 72px; height: 72px; background: var(--color-primary); color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: 700; flex-shrink: 0; }
+.profile-info h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 0.25rem; color: var(--color-text); }
+.profile-email { color: var(--color-text-muted); margin: 0 0 0.5rem; font-size: 0.9rem; }
+.tier-badge { font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
+.tier-free { background: var(--color-border); color: var(--color-text-muted); }
+.tier-pro { background: rgba(67,97,238,0.15); color: var(--color-primary); }
+.profile-tabs { display: flex; gap: 0.25rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--color-border); }
+.tab { padding: 0.75rem 1.25rem; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-size: 0.9rem; color: var(--color-text-muted); transition: all 0.2s; margin-bottom: -1px; }
+.tab.active { color: var(--color-primary); border-bottom-color: var(--color-primary); font-weight: 600; }
+.tab-content.card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 2rem; }
+.tab-content h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 1.5rem; color: var(--color-text); }
+.alert-success { background: rgba(34,197,94,0.1); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.9rem; }
+</style>
+
+@code {
+    private AppUser? currentUser;
+    private string activeTab = "info";
+    private string? successMessage;
+    private EditProfileModel editModel = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        currentUser = await UserManager.GetUserAsync(authState.User);
+        if (currentUser != null)
+        {
+            editModel.DisplayName = currentUser.DisplayName ?? "";
+            editModel.TimeZoneId = currentUser.TimeZoneId;
+        }
+    }
+
+    string GetInitial() => (currentUser?.DisplayName ?? currentUser?.Email ?? "?").FirstOrDefault().ToString().ToUpper();
+
+    async Task SaveProfile()
+    {
+        if (currentUser == null) return;
+        currentUser.DisplayName = editModel.DisplayName;
+        currentUser.TimeZoneId = editModel.TimeZoneId;
+        await UserManager.UpdateAsync(currentUser);
+        successMessage = "Profile saved!";
+    }
+
+    private class EditProfileModel
+    {
+        public string DisplayName { get; set; } = "";
+        public string TimeZoneId { get; set; } = "UTC";
+    }
+}
