@@ -1,3 +1,4 @@
+/* Styles moved to global app.css to avoid Blazor scoping conflicts */
 .navbar {
     display: flex;
     align-items: center;
