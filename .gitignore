@@ -1,19 +1,18 @@
-# Build output
-bin/
-obj/
-publish/
-*.user
-*.suo
-.vs/
+# Build output — all projects
+**/bin/
+**/obj/
 
-# Logs
+# Publish output
+publish/
+
+# Runtime logs
 *.log
 *.err
 
-# Environment / secrets
-appsettings.*.json
-!appsettings.json
-!appsettings.Development.json
+# Visual Studio
+.vs/
+*.user
+*.suo
 
 # OS
 .DS_Store
