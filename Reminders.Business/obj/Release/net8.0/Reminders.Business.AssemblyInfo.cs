@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Reminders.Business")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+366e63d1c76845f14c0065d92b9a40225148f39d")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+70644d0d1e3c0ed1617cabf0f88f863fc52f12d8")]
 [assembly: System.Reflection.AssemblyProductAttribute("Reminders.Business")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Reminders.Business")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

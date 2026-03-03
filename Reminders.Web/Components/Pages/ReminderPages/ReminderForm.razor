@@ -47,11 +47,31 @@
             <label>Recurring</label>
             <InputSelect @bind-Value="model.RecurringInterval" class="form-input">
                 <option value="None">None (one-time)</option>
-                <option value="Daily">Daily</option>
-                <option value="Weekly">Weekly</option>
-                <option value="Monthly">Monthly</option>
+                <option value="Daily">Every day</option>
+                <option value="Weekly">Every week (same day)</option>
+                <option value="Monthly">Every month (same date)</option>
+                <option value="Custom">Custom days of the week…</option>
             </InputSelect>
         </div>
+
+        @if (model.RecurringInterval == "Custom")
+        {
+            <div class="form-group">
+                <label>Repeat on</label>
+                <div class="day-picker">
+                    @foreach (var day in Enum.GetValues<DayOfWeek>())
+                    {
+                        var isOn = model.CustomDays.Contains(day);
+                        <button type="button"
+                                class="day-btn @(isOn ? "active" : "")"
+                                @onclick="() => ToggleDay(day)"
+                                aria-pressed="@isOn">
+                            @day.ToString()[..2]
+                        </button>
+                    }
+                </div>
+            </div>
+        }
 
         <div class="form-group">
             <label>Notification Channels</label>
@@ -59,15 +79,23 @@
                 @foreach (var ch in Enum.GetValues<NotificationChannel>())
                 {
                     var allowed = CurrentUser != null && SubSvc.IsChannelAllowed(CurrentUser, ch);
-                    <label class="channel-option @(allowed ? "" : "disabled")" title="@(allowed ? "" : "Upgrade to Pro to unlock")">
+                    var isChecked = model.Channels.Contains(ch);
+                    <label class="channel-pill @(isChecked ? "checked" : "") @(allowed ? "" : "locked")"
+                           title="@(allowed ? "" : "Upgrade to Pro to unlock")"
+                           aria-disabled="@(!allowed)">
                         <input type="checkbox"
-                               checked="@model.Channels.Contains(ch)"
+                               checked="@isChecked"
                                disabled="@(!allowed)"
                                @onchange="(e) => ToggleChannel(ch, (bool)(e.Value ?? false))" />
-                        <span>@GetChannelEmoji(ch) @ch</span>
+                        <span class="pill-icon">@GetChannelEmoji(ch)</span>
+                        <span class="pill-label">@ch</span>
                         @if (!allowed)
                         {
-                            <span class="pro-lock">🔒 Pro</span>
+                            <span class="pro-badge">Pro</span>
+                        }
+                        else
+                        {
+                            <span class="pill-check">✓</span>
                         }
                     </label>
                 }
@@ -84,17 +112,66 @@
 </div>
 
 <style>
-.form-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
-.form-modal-header h2 { font-size: 1.25rem; font-weight: 700; margin: 0; color: var(--color-text); }
-.btn-icon { background: none; border: none; font-size: 1.1rem; cursor: pointer; color: var(--color-text-muted); padding: 0.25rem; }
-.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-.form-textarea { resize: vertical; min-height: 60px; }
-.channel-checkboxes { display: flex; flex-direction: column; gap: 0.5rem; }
-.channel-option { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; color: var(--color-text); cursor: pointer; padding: 0.5rem; border-radius: 8px; }
-.channel-option:hover:not(.disabled) { background: var(--color-primary-alpha); }
-.channel-option.disabled { opacity: 0.5; cursor: not-allowed; }
-.pro-lock { font-size: 0.7rem; background: var(--color-primary-alpha); color: var(--color-primary); padding: 1px 6px; border-radius: 10px; margin-left: auto; }
-.form-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+    /* Modal header */
+    .form-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+    .form-modal-header h2 { font-size: 1.2rem; font-weight: 700; margin: 0; color: var(--color-text); }
+    .btn-icon { font-size: 1rem; cursor: pointer; color: var(--color-text-muted); padding: 0.3rem 0.5rem; border-radius: 6px; transition: background 0.15s; }
+    .btn-icon:hover { background: var(--color-primary-alpha); color: var(--color-primary); }
+
+    /* Form row */
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .form-textarea { resize: vertical; min-height: 60px; }
+
+    /* Channel pills */
+    .channel-checkboxes { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .channel-pill {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.6rem 0.875rem;
+        border-radius: 10px;
+        border: 1.5px solid var(--color-border);
+        cursor: pointer;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--color-text);
+        transition: border-color 0.15s, background 0.15s, color 0.15s;
+        position: relative;
+        user-select: none;
+    }
+    .channel-pill input[type="checkbox"] { position: absolute; opacity: 0; width: 0; height: 0; }
+    .channel-pill:hover:not(.locked) { border-color: var(--color-primary); background: var(--color-primary-alpha); }
+    .channel-pill.checked { border-color: var(--color-primary); background: var(--color-primary-alpha); color: var(--color-primary); }
+    .channel-pill.locked { opacity: 0.55; cursor: not-allowed; }
+    .pill-icon { font-size: 1.1rem; }
+    .pill-label { flex: 1; }
+    .pill-check { font-size: 0.85rem; color: var(--color-primary); font-weight: 700; }
+    .pro-badge { font-size: 0.65rem; font-weight: 700; background: var(--color-primary); color: #fff; padding: 2px 6px; border-radius: 20px; letter-spacing: 0.03em; text-transform: uppercase; margin-left: auto; }
+
+    /* Day-of-week picker */
+    .day-picker { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .day-btn {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: 1.5px solid var(--color-border);
+        background: transparent;
+        color: var(--color-text);
+        font-size: 0.75rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .day-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: var(--color-primary-alpha); }
+    .day-btn.active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
+
+    /* Actions */
+    .form-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+
+    @@media (max-width: 600px) {
+        .form-row { grid-template-columns: 1fr; }
+        .channel-checkboxes { grid-template-columns: 1fr; }
+    }
 </style>
 
 @code {
@@ -150,6 +227,12 @@
         else model.Channels.Remove(ch);
     }
 
+    void ToggleDay(DayOfWeek day)
+    {
+        if (model.CustomDays.Contains(day)) model.CustomDays.Remove(day);
+        else model.CustomDays.Add(day);
+    }
+
     string GetChannelEmoji(NotificationChannel ch) => ch switch
     {
         NotificationChannel.Email => "📧",
@@ -165,13 +248,18 @@
         errorMessage = null;
         try
         {
+            // Resolve the recurrence value — if Custom, encode the selected days
+            var recurringValue = model.RecurringInterval == "Custom" && model.CustomDays.Any()
+                ? "Custom:" + string.Join(",", model.CustomDays.OrderBy(d => (int)d).Select(d => d.ToString()))
+                : model.RecurringInterval;
+
             if (isEdit && Reminder != null)
             {
                 Reminder.Name = model.Name;
                 Reminder.Description = model.Description;
                 Reminder.OccursAt = model.OccursAt.ToUniversalTime();
                 Reminder.TimeZoneId = model.TimeZoneId;
-                Reminder.RecurringInterval = model.RecurringInterval;
+                Reminder.RecurringInterval = recurringValue;
                 Reminder.Channels.Clear();
                 foreach (var ch in model.Channels)
                     Reminder.Channels.Add(new ReminderChannel { Channel = ch });
@@ -186,7 +274,7 @@
                     Description = model.Description,
                     OccursAt = model.OccursAt.ToUniversalTime(),
                     TimeZoneId = model.TimeZoneId,
-                    RecurringInterval = model.RecurringInterval,
+                    RecurringInterval = recurringValue,
                     Channels = model.Channels.Select(ch => new ReminderChannel { Channel = ch }).ToList()
                 };
                 await ReminderSvc.CreateAsync(reminder);
@@ -215,6 +303,7 @@
         public string TimeZoneId { get; set; } = "UTC";
         public string RecurringInterval { get; set; } = "None";
         public HashSet<NotificationChannel> Channels { get; set; } = new();
+        public HashSet<DayOfWeek> CustomDays { get; set; } = new();
     }
 }
 
