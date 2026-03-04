@@ -18,11 +18,11 @@
         <AuthorizeView>
             <Authorized>
                 <li><NavLink href="/reminders" class="nav-link">🔔 Reminders</NavLink></li>
-                <li class="nav-dropdown">
-                    <button class="nav-link nav-dropdown-toggle" @onclick="ToggleProfile">👤 My Profile ▾</button>
+                <li class="nav-dropdown accordion-item @(profileOpen ? "expanded" : "")">
+                    <button class="nav-link nav-dropdown-toggle" @onclick="ToggleProfile" aria-expanded="@profileOpen">👤 My Profile <span class="chev">@(profileOpen ? "▴" : "▾")</span></button>
                     @if (profileOpen)
                     {
-                        <ul class="dropdown-menu">
+                        <ul class="profile-submenu-inline">
                             <li><NavLink href="/profile" class="dropdown-item">Profile</NavLink></li>
                             <li><NavLink href="/profile/subscription" class="dropdown-item">Subscription</NavLink></li>
                             <li><NavLink href="/profile/payment-history" class="dropdown-item">Payment History</NavLink></li>

@@ -59,7 +59,18 @@ else
                         <span class="badge @(currentUser.EmailConfirmed ? "badge-active" : "badge-paused")">
                             @(currentUser.EmailConfirmed ? "Email confirmed" : "Email not confirmed")
                         </span>
+                        @if (!currentUser.EmailConfirmed)
+                        {
+                            <button type="button" class="btn btn-sm btn-secondary" @onclick="GenerateEmailConfirmationLink">Generate confirmation link</button>
+                        }
                     </div>
+                    @if (!string.IsNullOrWhiteSpace(emailConfirmationLink))
+                    {
+                        <div class="confirm-help">
+                            <input class="form-input" readonly value="@emailConfirmationLink" />
+                            <button type="button" class="btn btn-sm btn-secondary" @onclick="CopyEmailLink">Copy link</button>
+                        </div>
+                    }
                 </div>
 
                 <div class="form-group">
@@ -69,7 +80,24 @@ else
                         <span class="badge @((currentUser.PhoneNumberConfirmed) ? "badge-active" : "badge-paused")">
                             @(currentUser.PhoneNumberConfirmed ? "Phone confirmed" : "Phone not confirmed")
                         </span>
+                        @if (!currentUser.PhoneNumberConfirmed && !string.IsNullOrWhiteSpace(editModel.PhoneNumber))
+                        {
+                            <button type="button" class="btn btn-sm btn-secondary" @onclick="GeneratePhoneCode">Send/Generate code</button>
+                        }
                     </div>
+                    @if (!string.IsNullOrWhiteSpace(phoneCodeHint))
+                    {
+                        <div class="confirm-help">
+                            <span class="badge badge-info">Code (dev): @phoneCodeHint</span>
+                        </div>
+                    }
+                    @if (!currentUser.PhoneNumberConfirmed)
+                    {
+                        <div class="confirm-help">
+                            <InputText @bind-Value="phoneCodeInput" class="form-input" placeholder="Enter phone confirmation code" />
+                            <button type="button" class="btn btn-sm btn-primary" @onclick="ConfirmPhoneCode">Confirm phone</button>
+                        </div>
+                    }
                 </div>
 
                 <div class="form-group">
@@ -117,7 +145,8 @@ else
 .tab { padding: .75rem 1rem; border-bottom: 2px solid transparent; color: var(--color-text-muted); }
 .tab.active { color: var(--color-primary); border-bottom-color: var(--color-primary); font-weight: 600; }
 .tab-content.card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 1.5rem; }
-.confirm-row { margin-top: .45rem; }
+.confirm-row { margin-top: .45rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.confirm-help { margin-top: .5rem; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
 .cal-subscribe { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--color-border); }
 .cal-url-box { display: flex; gap: .5rem; margin-top: .75rem; }
 .cal-url-input { flex: 1; font-size: .8rem; padding: .5rem .75rem; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg); color: var(--color-text-muted); font-family: monospace; }
@@ -129,6 +158,9 @@ else
     private string activeTab = "info";
     private string? successMessage;
     private bool copied;
+    private string? emailConfirmationLink;
+    private string? phoneCodeHint;
+    private string phoneCodeInput = string.Empty;
 
     private EditProfileModel editModel = new();
     private string CalendarUrl => $"{Nav.BaseUri}api/calendar/{currentUser?.Id}/reminders.ics";
@@ -157,6 +189,42 @@ else
         copied = true;
         await Task.Delay(1500);
         copied = false;
+    }
+
+    private async Task GenerateEmailConfirmationLink()
+    {
+        if (currentUser is null || string.IsNullOrWhiteSpace(currentUser.Email)) return;
+
+        var token = await UserManager.GenerateEmailConfirmationTokenAsync(currentUser);
+        var encoded = Uri.EscapeDataString(token);
+        emailConfirmationLink = $"{Nav.BaseUri}confirm-email?userId={Uri.EscapeDataString(currentUser.Id)}&code={encoded}";
+    }
+
+    private async Task CopyEmailLink()
+    {
+        if (!string.IsNullOrWhiteSpace(emailConfirmationLink))
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", emailConfirmationLink);
+    }
+
+    private async Task GeneratePhoneCode()
+    {
+        if (currentUser is null || string.IsNullOrWhiteSpace(editModel.PhoneNumber)) return;
+        phoneCodeHint = await UserManager.GenerateChangePhoneNumberTokenAsync(currentUser, editModel.PhoneNumber);
+    }
+
+    private async Task ConfirmPhoneCode()
+    {
+        if (currentUser is null || string.IsNullOrWhiteSpace(editModel.PhoneNumber) || string.IsNullOrWhiteSpace(phoneCodeInput)) return;
+
+        var ok = await UserManager.VerifyChangePhoneNumberTokenAsync(currentUser, phoneCodeInput, editModel.PhoneNumber);
+        if (!ok)
+        {
+            successMessage = "Invalid phone code.";
+            return;
+        }
+
+        var result = await UserManager.ChangePhoneNumberAsync(currentUser, editModel.PhoneNumber, phoneCodeInput);
+        successMessage = result.Succeeded ? "Phone confirmed successfully." : string.Join("; ", result.Errors.Select(e => e.Description));
     }
 
     private async Task SaveProfile()

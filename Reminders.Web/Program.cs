@@ -149,6 +149,17 @@ app.MapGet("/externallogin-callback", async (
     return Results.Redirect(returnUrl ?? "/reminders");
 });
 
+app.MapGet("/confirm-email", async (UserManager<AppUser> userManager, string userId, string code) =>
+{
+    var user = await userManager.FindByIdAsync(userId);
+    if (user is null) return Results.Redirect("/profile?confirm=email-failed");
+
+    var result = await userManager.ConfirmEmailAsync(user, code);
+    return result.Succeeded
+        ? Results.Redirect("/profile?confirm=email-ok")
+        : Results.Redirect("/profile?confirm=email-failed");
+});
+
 app.MapPost("/logout", async (SignInManager<AppUser> signInManager) =>
 {
     await signInManager.SignOutAsync();
