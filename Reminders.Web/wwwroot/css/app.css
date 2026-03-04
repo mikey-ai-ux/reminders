@@ -462,11 +462,25 @@ a.nav-link.active {
         gap: 0.2rem;
         box-shadow: var(--shadow-md);
     }
-    .nav-links.open {
-        display: flex !important;
-    }
+    .nav-links.open { display: flex !important; }
+
     .nav-links li { width: 100%; }
     .nav-link, a.nav-link, button.nav-link { width: 100%; }
+
+    /* Mobile profile dropdown should expand inline, not to the right */
+    .nav-dropdown { width: 100%; }
+    .dropdown-menu {
+        position: static;
+        right: auto;
+        top: auto;
+        width: 100%;
+        margin-top: 0.25rem;
+        border-radius: 10px;
+        box-shadow: none;
+        border: 1px solid var(--color-border);
+        background: var(--color-surface-2);
+    }
+    .dropdown-item { padding: 0.65rem 0.9rem; }
 }
 
 /* ================================================
