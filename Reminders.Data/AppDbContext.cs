@@ -43,6 +43,9 @@ public class AppDbContext : IdentityDbContext<AppUser>
         builder.Entity<ReminderNotification>(e =>
         {
             e.HasKey(rn => rn.Id);
+            e.Property(rn => rn.ReminderName).HasMaxLength(200).IsRequired();
+            e.Property(rn => rn.MessageSnapshot).HasMaxLength(2000).IsRequired();
+            e.Property(rn => rn.TimeZoneId).HasMaxLength(100).HasDefaultValue("UTC");
             e.HasOne(rn => rn.Reminder)
              .WithMany(r => r.Notifications)
              .HasForeignKey(rn => rn.ReminderId)

@@ -34,6 +34,12 @@ public class NotificationService : INotificationService
             ReminderId = reminder.Id,
             Channel = channel,
             Status = NotificationStatus.Pending,
+            ReminderName = reminder.Name,
+            MessageSnapshot = string.IsNullOrWhiteSpace(reminder.Description)
+                ? reminder.Name
+                : $"{reminder.Name}: {reminder.Description}",
+            TimeZoneId = reminder.TimeZoneId,
+            ScheduledForUtc = reminder.OccursAt,
             CreatedAt = DateTime.UtcNow
         };
         _db.ReminderNotifications.Add(notification);

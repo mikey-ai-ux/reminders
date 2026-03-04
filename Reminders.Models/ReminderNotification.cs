@@ -15,6 +15,13 @@ public class ReminderNotification
     public int ReminderId { get; set; }
     public NotificationChannel Channel { get; set; }
     public NotificationStatus Status { get; set; } = NotificationStatus.Pending;
+
+    // Snapshot fields for historical dashboard
+    public string ReminderName { get; set; } = string.Empty;
+    public string MessageSnapshot { get; set; } = string.Empty;
+    public string TimeZoneId { get; set; } = "UTC";
+    public DateTime ScheduledForUtc { get; set; }
+
     public DateTime? SentAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

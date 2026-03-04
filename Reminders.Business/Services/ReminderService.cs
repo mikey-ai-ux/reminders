@@ -69,4 +69,14 @@ public class ReminderService : IReminderService
         await _db.SaveChangesAsync();
         return true;
     }
+
+    public async Task<List<ReminderNotification>> GetNotificationHistoryAsync(string userId)
+    {
+        return await _db.ReminderNotifications
+            .AsNoTracking()
+            .Include(n => n.Reminder)
+            .Where(n => n.Reminder != null && n.Reminder.UserId == userId)
+            .OrderByDescending(n => n.SentAt ?? n.CreatedAt)
+            .ToListAsync();
+    }
 }
