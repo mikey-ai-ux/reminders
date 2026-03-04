@@ -31,7 +31,9 @@ public class AppDbContext : IdentityDbContext<AppUser>
             e.HasKey(r => r.Id);
             e.Property(r => r.Name).HasMaxLength(200).IsRequired();
             e.Property(r => r.TimeZoneId).HasMaxLength(100);
-            e.Property(r => r.RecurringInterval).HasMaxLength(20).HasDefaultValue("None");
+            e.Property(r => r.Icon).HasMaxLength(20).HasDefaultValue("🔔");
+            e.Property(r => r.CustomIconUrl).HasMaxLength(1024);
+            e.Property(r => r.RecurringInterval).HasMaxLength(100).HasDefaultValue("None");
             e.HasOne(r => r.User)
              .WithMany(u => u.Reminders)
              .HasForeignKey(r => r.UserId)

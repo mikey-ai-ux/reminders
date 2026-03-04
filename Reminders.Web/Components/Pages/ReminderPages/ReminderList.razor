@@ -5,6 +5,7 @@
 @inject UserManager<AppUser> UserManager
 @inject ISubscriptionService SubSvc
 @inject AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JS
 @rendermode InteractiveServer
 
 <PageTitle>My Reminders</PageTitle>
@@ -116,6 +117,9 @@ else
 
     async Task DeleteReminder(int id)
     {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", "Delete this reminder? This action cannot be undone.");
+        if (!confirmed) return;
+
         if (currentUser != null) await ReminderSvc.DeleteAsync(id, currentUser.Id);
         reminders = reminders.Where(r => r.Id != id).ToList();
     }
