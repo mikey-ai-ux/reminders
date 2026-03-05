@@ -27,7 +27,10 @@
             <div class="slot-bar" aria-label="Reminder slots usage">
                 @for (var i = 1; i <= 10; i++)
                 {
-                    <span class="slot @(i <= totalCount ? "filled" : "")"></span>
+                    var cls = i <= totalCount
+                        ? (i >= 10 ? "filled danger" : i >= 8 ? "filled warning" : "filled")
+                        : string.Empty;
+                    <span class="slot @cls"></span>
                 }
             </div>
         }
@@ -101,6 +104,8 @@ else
 .slot-bar { margin-top:.45rem; display:grid; grid-template-columns:repeat(10, minmax(16px, 1fr)); gap:.28rem; max-width:260px; }
 .slot { height:8px; border-radius:999px; background:var(--color-border); }
 .slot.filled { background:var(--color-primary); }
+.slot.filled.warning { background: var(--color-warning); }
+.slot.filled.danger { background: var(--color-danger); }
 
 .reminders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem; }
 .empty-state { text-align: center; padding: 5rem 1rem; }
