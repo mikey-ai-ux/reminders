@@ -9,13 +9,29 @@
 
     <script>
         (function () {
+            function getCookie(name) {
+                var match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+                return match ? decodeURIComponent(match[2]) : null;
+            }
+
+            function setCookie(name, value) {
+                document.cookie = name + '=' + encodeURIComponent(value) + '; path=/; max-age=31536000; SameSite=Lax';
+            }
+
+            var initial = 'light';
             try {
                 var stored = localStorage.getItem('theme');
-                var initial = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-                document.documentElement.setAttribute('data-theme', initial);
+                var cookieTheme = getCookie('theme');
+                initial = stored || cookieTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                localStorage.setItem('theme', initial);
+                setCookie('theme', initial);
             } catch {
-                document.documentElement.setAttribute('data-theme', 'light');
+                var cookieOnly = getCookie('theme');
+                initial = cookieOnly || 'light';
+                setCookie('theme', initial);
             }
+
+            document.documentElement.setAttribute('data-theme', initial);
         })();
     </script>
 
