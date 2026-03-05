@@ -18,15 +18,15 @@
         {
             <div class="usage-row">
                 <span class="badge badge-free">Free plan</span>
-                <span class="usage-text">@activeCount / 10 reminders used</span>
-                @if (activeCount >= 10)
+                <span class="usage-text">@totalCount / 10 reminders used</span>
+                @if (totalCount >= 10)
                 {
                     <span class="usage-limit">Limit reached</span>
                 }
             </div>
         }
     </div>
-    <button class="btn btn-primary" @onclick="ShowNewForm" disabled="@(currentUser?.SubscriptionTier == SubscriptionTier.Free && activeCount >= 10)">+ New Reminder</button>
+    <button class="btn btn-primary" @onclick="ShowNewForm" disabled="@(currentUser?.SubscriptionTier == SubscriptionTier.Free && totalCount >= 10)">+ New Reminder</button>
 </div>
 
 @if (showForm)
@@ -120,7 +120,7 @@ else
     private bool showDeleteConfirm = false;
     private Reminder? pendingDeleteReminder;
 
-    private int activeCount => reminders.Count(r => r.IsActive);
+    private int totalCount => reminders.Count;
 
     protected override async Task OnInitializedAsync()
     {

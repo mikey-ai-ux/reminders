@@ -29,9 +29,9 @@ public class ReminderService : IReminderService
         var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == reminder.UserId);
         if (user != null && user.SubscriptionTier == Reminders.Models.Enums.SubscriptionTier.Free)
         {
-            var currentCount = await _db.Reminders.CountAsync(r => r.UserId == reminder.UserId && r.IsActive);
+            var currentCount = await _db.Reminders.CountAsync(r => r.UserId == reminder.UserId);
             if (currentCount >= 10)
-                throw new InvalidOperationException("Free plan allows up to 10 active reminders. Upgrade to Pro for unlimited reminders.");
+                throw new InvalidOperationException("Free plan allows up to 10 reminders. Upgrade to Pro for unlimited reminders.");
         }
 
         reminder.CreatedAt = DateTime.UtcNow;
