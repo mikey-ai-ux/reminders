@@ -409,14 +409,18 @@ a.nav-link.active {
 /* Expanded inline profile submenu (desktop + mobile) */
 .profile-submenu-inline {
     list-style: none;
-    margin: 0.35rem 0 0 0.6rem; /* slight tabbed offset */
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    margin: 0;
     padding: 0.35rem;
     border: 1px solid var(--color-border);
     border-left: 3px solid var(--color-primary);
     border-radius: 10px;
     background: var(--color-surface-2);
-    width: calc(100% - 0.6rem);
     min-width: 240px;
+    z-index: 220;
+    box-shadow: var(--shadow-md);
 }
 
 .dropdown-item {
