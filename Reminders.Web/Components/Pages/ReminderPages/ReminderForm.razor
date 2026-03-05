@@ -31,7 +31,8 @@
                     <button type="button" class="icon-btn @(model.Icon == icon ? "active" : "")" @onclick='() => model.Icon = icon'>@icon</button>
                 }
             </div>
-            <InputText @bind-Value="model.CustomIconUrl" class="form-input" placeholder="Optional custom icon URL" />
+            <InputText @bind-Value="model.CustomIconUrl" class="form-input" placeholder="Optional custom icon URL (https://...)" />
+            <ValidationMessage For="() => model.CustomIconUrl" />
         </div>
 
         <div class="form-group">
@@ -234,6 +235,14 @@
             if (!TimeOnly.TryParse(model.TimeOfDay, out var tod))
                 tod = TimeOnly.FromDateTime(DateTime.Now.AddHours(1));
 
+            if (!string.IsNullOrWhiteSpace(model.CustomIconUrl))
+            {
+                var ok = Uri.TryCreate(model.CustomIconUrl, UriKind.Absolute, out var uri)
+                         && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+                if (!ok)
+                    throw new InvalidOperationException("Custom icon URL must be a valid absolute http/https URL.");
+            }
+
             var localDt = new DateTime(localDate.Year, localDate.Month, localDate.Day, tod.Hour, tod.Minute, 0, DateTimeKind.Local);
             var recurring = model.ReminderType == "OneTime" ? "None" : model.RecurringInterval;
             if (model.ReminderType == "Recurring" && model.RecurringInterval == "Custom" && model.CustomDays.Any())
@@ -297,6 +306,7 @@
         public string Name { get; set; } = string.Empty;
         public string? Description { get; set; }
         public string Icon { get; set; } = "🔔";
+        [System.ComponentModel.DataAnnotations.Url(ErrorMessage = "Please provide a valid URL")]
         public string? CustomIconUrl { get; set; }
 
         public string ReminderType { get; set; } = "OneTime"; // OneTime | Recurring
