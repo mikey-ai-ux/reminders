@@ -5,7 +5,6 @@
 @inject UserManager<AppUser> UserManager
 @inject ISubscriptionService SubSvc
 @inject AuthenticationStateProvider AuthStateProvider
-@inject IJSRuntime JS
 @rendermode InteractiveServer
 
 <PageTitle>My Reminders</PageTitle>
@@ -14,8 +13,20 @@
     <div>
         <h1>🔔 My Reminders</h1>
         <p class="page-subtitle">Manage your scheduled reminders</p>
+
+        @if (currentUser?.SubscriptionTier == SubscriptionTier.Free)
+        {
+            <div class="usage-row">
+                <span class="badge badge-free">Free plan</span>
+                <span class="usage-text">@activeCount / 10 reminders used</span>
+                @if (activeCount >= 10)
+                {
+                    <span class="usage-limit">Limit reached</span>
+                }
+            </div>
+        }
     </div>
-    <button class="btn btn-primary" @onclick="ShowNewForm">+ New Reminder</button>
+    <button class="btn btn-primary" @onclick="ShowNewForm" disabled="@(currentUser?.SubscriptionTier == SubscriptionTier.Free && activeCount >= 10)">+ New Reminder</button>
 </div>
 
 @if (showForm)
@@ -23,6 +34,22 @@
     <div class="modal-overlay" @onclick="HideForm">
         <div class="modal-card" @onclick:stopPropagation>
             <ReminderForm Reminder="editingReminder" CurrentUser="currentUser" OnSaved="OnReminderSaved" OnCancel="HideForm" />
+        </div>
+    </div>
+}
+
+@if (showDeleteConfirm && pendingDeleteReminder is not null)
+{
+    <div class="modal-overlay" @onclick="CancelDelete">
+        <div class="confirm-card" @onclick:stopPropagation>
+            <h3>Delete reminder?</h3>
+            <p>
+                This will delete <strong>@pendingDeleteReminder.Name</strong> and cannot be undone.
+            </p>
+            <div class="confirm-actions">
+                <button class="btn btn-secondary" @onclick="CancelDelete">Cancel</button>
+                <button class="btn btn-danger" @onclick="ConfirmDelete">Delete</button>
+            </div>
         </div>
     </div>
 }
@@ -62,6 +89,10 @@ else
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem; }
 .page-header h1 { font-size: 1.75rem; font-weight: 700; margin: 0 0 0.25rem; color: var(--color-text); }
 .page-subtitle { color: var(--color-text-muted); margin: 0; font-size: 0.9rem; }
+.usage-row { margin-top: .6rem; display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; }
+.usage-text { font-size:.82rem; color: var(--color-text-muted); }
+.usage-limit { font-size:.75rem; color:#fff; background:var(--color-danger); padding:2px 8px; border-radius:12px; }
+
 .reminders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem; }
 .empty-state { text-align: center; padding: 5rem 1rem; }
 .empty-icon { font-size: 4rem; margin-bottom: 1rem; }
@@ -70,8 +101,13 @@ else
 .loading-state { text-align: center; padding: 4rem; color: var(--color-text-muted); }
 .spinner { width: 36px; height: 36px; border: 3px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 1rem; }
 @@keyframes spin { to { transform: rotate(360deg); } }
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 500; padding: 1rem; }
+
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 500; padding: 1rem; }
 .modal-card { background: var(--color-surface); border-radius: 16px; padding: 2rem; width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; }
+.confirm-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 14px; width:100%; max-width: 430px; padding: 1.2rem 1.2rem 1rem; box-shadow: var(--shadow-lg); }
+.confirm-card h3 { margin:0 0 .45rem; }
+.confirm-card p { margin:0; color:var(--color-text-muted); }
+.confirm-actions { display:flex; justify-content:flex-end; gap:.6rem; margin-top:1rem; }
 </style>
 
 @code {
@@ -80,6 +116,11 @@ else
     private bool isLoading = true;
     private bool showForm = false;
     private Reminder? editingReminder;
+
+    private bool showDeleteConfirm = false;
+    private Reminder? pendingDeleteReminder;
+
+    private int activeCount => reminders.Count(r => r.IsActive);
 
     protected override async Task OnInitializedAsync()
     {
@@ -115,13 +156,27 @@ else
         reminders = reminders.Select(r => { if (r.Id == id) r.IsPaused = false; return r; }).ToList();
     }
 
-    async Task DeleteReminder(int id)
+    Task DeleteReminder(int id)
     {
-        var confirmed = await JS.InvokeAsync<bool>("confirm", "Delete this reminder? This action cannot be undone.");
-        if (!confirmed) return;
+        pendingDeleteReminder = reminders.FirstOrDefault(r => r.Id == id);
+        showDeleteConfirm = pendingDeleteReminder is not null;
+        return Task.CompletedTask;
+    }
 
-        if (currentUser != null) await ReminderSvc.DeleteAsync(id, currentUser.Id);
-        reminders = reminders.Where(r => r.Id != id).ToList();
+    async Task ConfirmDelete()
+    {
+        if (pendingDeleteReminder is null || currentUser is null) return;
+
+        await ReminderSvc.DeleteAsync(pendingDeleteReminder.Id, currentUser.Id);
+        reminders = reminders.Where(r => r.Id != pendingDeleteReminder.Id).ToList();
+
+        pendingDeleteReminder = null;
+        showDeleteConfirm = false;
+    }
+
+    void CancelDelete()
+    {
+        pendingDeleteReminder = null;
+        showDeleteConfirm = false;
     }
 }
-
