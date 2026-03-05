@@ -1,20 +1,27 @@
-// Theme toggle — persists via localStorage
+// Lightweight theme toggle — no MutationObserver
 (function () {
     const current = document.documentElement.getAttribute('data-theme');
     const stored = localStorage.getItem('theme');
     const theme = stored || current || 'light';
+
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
-    updateToggleIcon(theme);
 
-    // Keep icon in sync after Blazor re-renders/nav updates
-    const observer = new MutationObserver(() => updateToggleIcon(document.documentElement.getAttribute('data-theme') || theme));
-    observer.observe(document.body, { childList: true, subtree: true });
+    // Set icon once DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => updateToggleIcon(theme), { once: true });
+    } else {
+        updateToggleIcon(theme);
+    }
+
+    // Re-sync icon on navigation restores
+    window.addEventListener('pageshow', () => updateToggleIcon(document.documentElement.getAttribute('data-theme') || theme));
 })();
 
 function toggleTheme() {
     const current = document.documentElement.getAttribute('data-theme') || 'light';
     const next = current === 'dark' ? 'light' : 'dark';
+
     document.documentElement.setAttribute('data-theme', next);
     localStorage.setItem('theme', next);
     updateToggleIcon(next);
