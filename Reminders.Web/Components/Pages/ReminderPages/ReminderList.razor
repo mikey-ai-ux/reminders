@@ -24,6 +24,12 @@
                     <span class="usage-limit">Limit reached</span>
                 }
             </div>
+            <div class="slot-bar" aria-label="Reminder slots usage">
+                @for (var i = 1; i <= 10; i++)
+                {
+                    <span class="slot @(i <= totalCount ? "filled" : "")"></span>
+                }
+            </div>
         }
     </div>
     <button class="btn btn-primary" @onclick="ShowNewForm" disabled="@(currentUser?.SubscriptionTier == SubscriptionTier.Free && totalCount >= 10)">+ New Reminder</button>
@@ -92,6 +98,9 @@ else
 .usage-row { margin-top: .6rem; display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; }
 .usage-text { font-size:.82rem; color: var(--color-text-muted); }
 .usage-limit { font-size:.75rem; color:#fff; background:var(--color-danger); padding:2px 8px; border-radius:12px; }
+.slot-bar { margin-top:.45rem; display:grid; grid-template-columns:repeat(10, minmax(16px, 1fr)); gap:.28rem; max-width:260px; }
+.slot { height:8px; border-radius:999px; background:var(--color-border); }
+.slot.filled { background:var(--color-primary); }
 
 .reminders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem; }
 .empty-state { text-align: center; padding: 5rem 1rem; }
