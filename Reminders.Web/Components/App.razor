@@ -1,5 +1,7 @@
+@inject IHttpContextAccessor HttpContextAccessor
+
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="@GetServerTheme()">
 
 <head>
     <meta charset="utf-8" />
@@ -9,29 +11,16 @@
 
     <script>
         (function () {
-            function getCookie(name) {
-                var match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-                return match ? decodeURIComponent(match[2]) : null;
-            }
-
-            function setCookie(name, value) {
-                document.cookie = name + '=' + encodeURIComponent(value) + '; path=/; max-age=31536000; SameSite=Lax';
-            }
-
-            var initial = 'dark';
             try {
-                var cookieTheme = getCookie('theme');
+                var attr = document.documentElement.getAttribute('data-theme') || 'dark';
                 var stored = localStorage.getItem('theme');
-                initial = cookieTheme || stored || 'dark';
-                localStorage.setItem('theme', initial);
-                setCookie('theme', initial);
+                var finalTheme = (stored === 'dark' || stored === 'light') ? stored : attr;
+                document.documentElement.setAttribute('data-theme', finalTheme);
+                localStorage.setItem('theme', finalTheme);
+                document.cookie = 'theme=' + encodeURIComponent(finalTheme) + '; path=/; max-age=31536000; SameSite=Lax';
             } catch {
-                var cookieOnly = getCookie('theme');
-                initial = cookieOnly || 'dark';
-                setCookie('theme', initial);
+                document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme') || 'dark');
             }
-
-            document.documentElement.setAttribute('data-theme', initial);
         })();
     </script>
 
@@ -48,3 +37,11 @@
 </body>
 
 </html>
+
+@code {
+    private string GetServerTheme()
+    {
+        var cookie = HttpContextAccessor.HttpContext?.Request?.Cookies["theme"];
+        return cookie is "dark" or "light" ? cookie : "dark";
+    }
+}
