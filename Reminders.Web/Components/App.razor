@@ -18,16 +18,16 @@
                 document.cookie = name + '=' + encodeURIComponent(value) + '; path=/; max-age=31536000; SameSite=Lax';
             }
 
-            var initial = 'light';
+            var initial = 'dark';
             try {
-                var stored = localStorage.getItem('theme');
                 var cookieTheme = getCookie('theme');
-                initial = stored || cookieTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                var stored = localStorage.getItem('theme');
+                initial = cookieTheme || stored || 'dark';
                 localStorage.setItem('theme', initial);
                 setCookie('theme', initial);
             } catch {
                 var cookieOnly = getCookie('theme');
-                initial = cookieOnly || 'light';
+                initial = cookieOnly || 'dark';
                 setCookie('theme', initial);
             }
 

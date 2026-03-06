@@ -1,4 +1,5 @@
 @rendermode InteractiveServer
+@inject IJSRuntime JS
 
 <nav class="navbar">
     <div class="navbar-brand">
@@ -42,5 +43,10 @@
     private bool menuOpen;
 
     private void ToggleMenu() => menuOpen = !menuOpen;
-    private void CloseMenu() => menuOpen = false;
+
+    private async Task CloseMenu()
+    {
+        menuOpen = false;
+        await JS.InvokeVoidAsync("enforceTheme");
+    }
 }

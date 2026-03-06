@@ -387,18 +387,21 @@ a.nav-link.active {
 }
 
 /* Auth button visibility */
-.btn-auth-login {
+a.nav-link.btn-auth-login,
+button.nav-link.btn-auth-login {
     border: 1px solid var(--color-border) !important;
     background: var(--color-surface) !important;
     color: var(--color-text) !important;
     font-weight: 600;
 }
-.btn-auth-login:hover {
+a.nav-link.btn-auth-login:hover,
+button.nav-link.btn-auth-login:hover {
     border-color: var(--color-primary) !important;
     color: var(--color-primary) !important;
     background: var(--color-primary-alpha) !important;
 }
-.btn-auth-signup { font-weight: 700; }
+a.nav-link.btn-auth-signup,
+button.nav-link.btn-auth-signup { font-weight: 700; color:#fff !important; }
 
 :root[data-theme="dark"] .btn-auth-login {
     border-color: #4b5563 !important;

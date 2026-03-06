@@ -9,40 +9,38 @@
         document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax`;
     }
 
-    let theme = 'light';
-
-    try {
-        const current = document.documentElement.getAttribute('data-theme');
-        const stored = localStorage.getItem('theme');
+    function readTheme() {
         const cookieTheme = getCookie('theme');
-        theme = stored || cookieTheme || current || 'light';
-
-        document.documentElement.setAttribute('data-theme', theme);
-        localStorage.setItem('theme', theme);
-        setCookie('theme', theme);
-    } catch {
-        theme = getCookie('theme') || document.documentElement.getAttribute('data-theme') || 'light';
-        document.documentElement.setAttribute('data-theme', theme);
-        setCookie('theme', theme);
+        const storageTheme = (() => { try { return localStorage.getItem('theme'); } catch { return null; } })();
+        return cookieTheme || storageTheme || 'dark';
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => updateToggleIcon(theme), { once: true });
-    } else {
+    function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        try { localStorage.setItem('theme', theme); } catch {}
+        setCookie('theme', theme);
         updateToggleIcon(theme);
     }
+
+    window.enforceTheme = function () {
+        applyTheme(readTheme());
+    }
+
+    applyTheme(readTheme());
+
+    window.addEventListener('pageshow', () => applyTheme(readTheme()));
+    window.addEventListener('popstate', () => applyTheme(readTheme()));
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') applyTheme(readTheme());
+    });
 })();
 
 function toggleTheme() {
-    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
     const next = current === 'dark' ? 'light' : 'dark';
 
     document.documentElement.setAttribute('data-theme', next);
-
-    try {
-        localStorage.setItem('theme', next);
-    } catch {}
-
+    try { localStorage.setItem('theme', next); } catch {}
     document.cookie = `theme=${encodeURIComponent(next)}; path=/; max-age=31536000; SameSite=Lax`;
     updateToggleIcon(next);
 }
