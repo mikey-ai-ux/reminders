@@ -5,6 +5,7 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@inject Reminders.Data.AppDbContext Db
 @rendermode InteractiveServer
 
 <PageTitle>My Profile — Reminders</PageTitle>
@@ -124,6 +125,29 @@ else
                     <button class="btn btn-secondary" @onclick="CopyCalendarUrl">@(copied ? "✅ Copied!" : "📋 Copy Link")</button>
                 </div>
             </div>
+
+            <div class="device-list card-section">
+                <h3>📱 Registered Push Devices</h3>
+                @if (!pushDevices.Any())
+                {
+                    <p class="muted">No devices registered yet.</p>
+                }
+                else
+                {
+                    <ul class="devices">
+                        @foreach (var d in pushDevices)
+                        {
+                            <li>
+                                <div class="dev-main">
+                                    <code>@ShortEndpoint(d.Endpoint)</code>
+                                    <span class="muted">Added @d.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-danger-ghost" @onclick="() => RemoveDevice(d.Id)">Remove</button>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
         </div>
     }
     else if (activeTab == "sub")
@@ -150,6 +174,11 @@ else
 .cal-subscribe { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--color-border); }
 .cal-url-box { display: flex; gap: .5rem; margin-top: .75rem; }
 .cal-url-input { flex: 1; font-size: .8rem; padding: .5rem .75rem; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg); color: var(--color-text-muted); font-family: monospace; }
+.device-list { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+.devices { list-style: none; padding: 0; margin: .5rem 0 0; display: flex; flex-direction: column; gap: .5rem; }
+.devices li { display: flex; justify-content: space-between; align-items: center; gap: .75rem; border: 1px solid var(--color-border); border-radius: 10px; padding: .6rem .7rem; background: var(--color-bg); }
+.dev-main { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+.dev-main code { font-size: .75rem; overflow-wrap: anywhere; }
 </style>
 
 @code {
@@ -161,6 +190,7 @@ else
     private string? emailConfirmationLink;
     private string? phoneCodeHint;
     private string phoneCodeInput = string.Empty;
+    private List<PushSubscriptionRecord> pushDevices = new();
 
     private EditProfileModel editModel = new();
     private string CalendarUrl => $"{Nav.BaseUri}api/calendar/{currentUser?.Id}/reminders.ics";
@@ -176,6 +206,11 @@ else
             editModel.Email = currentUser.Email ?? string.Empty;
             editModel.PhoneNumber = currentUser.PhoneNumber ?? string.Empty;
             editModel.TimeZoneId = string.IsNullOrWhiteSpace(currentUser.TimeZoneId) ? "UTC" : currentUser.TimeZoneId;
+
+            pushDevices = Db.PushSubscriptions
+                .Where(x => x.UserId == currentUser.Id)
+                .OrderByDescending(x => x.CreatedAt)
+                .ToList();
         }
 
         isLoading = false;
@@ -225,6 +260,23 @@ else
 
         var result = await UserManager.ChangePhoneNumberAsync(currentUser, editModel.PhoneNumber, phoneCodeInput);
         successMessage = result.Succeeded ? "Phone confirmed successfully." : string.Join("; ", result.Errors.Select(e => e.Description));
+    }
+
+    private string ShortEndpoint(string endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint)) return "(unknown)";
+        return endpoint.Length > 80 ? endpoint[..80] + "…" : endpoint;
+    }
+
+    private async Task RemoveDevice(int id)
+    {
+        var sub = Db.PushSubscriptions.FirstOrDefault(x => x.Id == id && currentUser != null && x.UserId == currentUser.Id);
+        if (sub == null) return;
+
+        Db.PushSubscriptions.Remove(sub);
+        await Db.SaveChangesAsync();
+
+        pushDevices = pushDevices.Where(x => x.Id != id).ToList();
     }
 
     private async Task SaveProfile()
