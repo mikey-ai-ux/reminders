@@ -13,6 +13,7 @@ public class NotificationService : INotificationService
     private readonly IVoiceNotificationSender _voice;
     private readonly IPushNotificationSender _push;
     private readonly AppDbContext _db;
+    private readonly ISubscriptionService _subscriptionService;
     private readonly ILogger<NotificationService> _logger;
 
     public NotificationService(
@@ -21,10 +22,13 @@ public class NotificationService : INotificationService
         IVoiceNotificationSender voice,
         IPushNotificationSender push,
         AppDbContext db,
+        ISubscriptionService subscriptionService,
         ILogger<NotificationService> logger)
     {
         _email = email; _sms = sms; _voice = voice; _push = push;
-        _db = db; _logger = logger;
+        _db = db;
+        _subscriptionService = subscriptionService;
+        _logger = logger;
     }
 
     public async Task DispatchAsync(Reminder reminder, NotificationChannel channel, AppUser user)
@@ -47,6 +51,15 @@ public class NotificationService : INotificationService
 
         try
         {
+            var withinQuota = await _subscriptionService.IsChannelWithinQuotaAsync(user, channel);
+            if (!withinQuota)
+            {
+                _logger.LogWarning("Quota exceeded for user {UserId} channel {Channel}", user.Id, channel);
+                notification.Status = NotificationStatus.Failed;
+                await _db.SaveChangesAsync();
+                return;
+            }
+
             switch (channel)
             {
                 case NotificationChannel.Email: await _email.SendAsync(user, reminder); break;

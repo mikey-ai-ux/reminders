@@ -105,6 +105,10 @@
 
         <div class="form-group">
             <label>Notification channels</label>
+            @if (!string.IsNullOrWhiteSpace(quotaWarning))
+            {
+                <div class="alert alert-info">@quotaWarning</div>
+            }
             <div class="channel-checkboxes">
                 @foreach (var ch in Enum.GetValues<NotificationChannel>())
                 {
@@ -163,6 +167,7 @@
     private bool isEdit;
     private bool isSaving;
     private string? errorMessage;
+    private string? quotaWarning;
 
     private static readonly string[] IconChoices = ["🔔","💊","🏠","💼","📅","💳","🚗","📞","🧾","🎯"];
 
@@ -207,11 +212,40 @@
             isEdit = false;
             model = new ReminderFormModel();
         }
+
+        _ = RefreshQuotaWarning();
     }
 
-    void ToggleChannel(NotificationChannel ch, bool value)
+    private async Task RefreshQuotaWarning()
+    {
+        quotaWarning = null;
+        if (CurrentUser is null) return;
+
+        var info = await SubSvc.GetQuotaInfoAsync(CurrentUser);
+
+        var warnings = new List<string>();
+        if (model.Channels.Contains(NotificationChannel.SMS) && info.SmsLimitPerMonth > 0)
+        {
+            var left = info.SmsLimitPerMonth - info.SmsUsedThisMonth;
+            if (left <= 0) warnings.Add($"SMS quota reached ({info.SmsUsedThisMonth}/{info.SmsLimitPerMonth})");
+            else if (left <= 10) warnings.Add($"SMS quota almost reached ({info.SmsUsedThisMonth}/{info.SmsLimitPerMonth})");
+        }
+
+        if (model.Channels.Contains(NotificationChannel.Voice) && info.VoiceLimitPerMonth > 0)
+        {
+            var left = info.VoiceLimitPerMonth - info.VoiceUsedThisMonth;
+            if (left <= 0) warnings.Add($"Voice call quota reached ({info.VoiceUsedThisMonth}/{info.VoiceLimitPerMonth})");
+            else if (left <= 5) warnings.Add($"Voice quota almost reached ({info.VoiceUsedThisMonth}/{info.VoiceLimitPerMonth})");
+        }
+
+        if (warnings.Count > 0)
+            quotaWarning = string.Join(" • ", warnings);
+    }
+
+    async Task ToggleChannel(NotificationChannel ch, bool value)
     {
         if (value) model.Channels.Add(ch); else model.Channels.Remove(ch);
+        await RefreshQuotaWarning();
     }
 
     void ToggleDay(DayOfWeek day)

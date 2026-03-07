@@ -24,6 +24,10 @@ public class AppDbContext : IdentityDbContext<AppUser>
             e.Property(u => u.TimeZoneId).HasMaxLength(100).HasDefaultValue("UTC");
             e.Property(u => u.StripeCustomerId).HasMaxLength(200);
             e.Property(u => u.StripeSubscriptionId).HasMaxLength(200);
+            e.HasOne(u => u.SubscriptionPlan)
+             .WithMany()
+             .HasForeignKey(u => u.SubscriptionPlanId)
+             .OnDelete(DeleteBehavior.SetNull);
         });
 
         builder.Entity<Reminder>(e =>
@@ -66,6 +70,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
             e.HasKey(sp => sp.Id);
             e.Property(sp => sp.Name).HasMaxLength(100).IsRequired();
             e.Property(sp => sp.Price).HasPrecision(10, 2);
+            e.Property(sp => sp.StripePriceId).HasMaxLength(200);
         });
 
         builder.Entity<PushSubscriptionRecord>(e =>
@@ -83,8 +88,50 @@ public class AppDbContext : IdentityDbContext<AppUser>
 
         // Seed subscription plans
         builder.Entity<SubscriptionPlan>().HasData(
-            new SubscriptionPlan { Id = 1, Name = "Free", Price = 0, BillingInterval = "Monthly", AllowedChannelsJson = "[\"Email\",\"Push\"]", FreeNotificationQuota = 10 },
-            new SubscriptionPlan { Id = 2, Name = "Pro", Price = 9.99m, BillingInterval = "Monthly", AllowedChannelsJson = "[\"Email\",\"Push\",\"SMS\",\"Voice\"]", FreeNotificationQuota = 1000 }
+            new SubscriptionPlan
+            {
+                Id = 1,
+                Name = "Free",
+                Price = 0,
+                BillingInterval = "Monthly",
+                AllowedChannelsJson = "[\"Email\",\"Push\"]",
+                SmsMonthlyLimit = 0,
+                VoiceMonthlyLimit = 0,
+                FreeNotificationQuota = 10
+            },
+            new SubscriptionPlan
+            {
+                Id = 2,
+                Name = "Starter",
+                Price = 9.99m,
+                BillingInterval = "Monthly",
+                AllowedChannelsJson = "[\"Email\",\"Push\",\"SMS\",\"Voice\"]",
+                SmsMonthlyLimit = 100,
+                VoiceMonthlyLimit = 10,
+                FreeNotificationQuota = 1000
+            },
+            new SubscriptionPlan
+            {
+                Id = 3,
+                Name = "Growth",
+                Price = 29.99m,
+                BillingInterval = "Monthly",
+                AllowedChannelsJson = "[\"Email\",\"Push\",\"SMS\",\"Voice\"]",
+                SmsMonthlyLimit = 2000,
+                VoiceMonthlyLimit = 200,
+                FreeNotificationQuota = 1000
+            },
+            new SubscriptionPlan
+            {
+                Id = 4,
+                Name = "Scale",
+                Price = 99.99m,
+                BillingInterval = "Monthly",
+                AllowedChannelsJson = "[\"Email\",\"Push\",\"SMS\",\"Voice\"]",
+                SmsMonthlyLimit = 10000,
+                VoiceMonthlyLimit = 1000,
+                FreeNotificationQuota = 1000
+            }
         );
     }
 }
