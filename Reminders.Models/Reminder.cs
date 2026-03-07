@@ -8,6 +8,8 @@ public class Reminder
     public string UserId { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
+    public string Icon { get; set; } = "🔔";
+    public string? CustomIconUrl { get; set; }
     public DateTime OccursAt { get; set; }
     public string TimeZoneId { get; set; } = "UTC";
     public bool IsActive { get; set; } = true;

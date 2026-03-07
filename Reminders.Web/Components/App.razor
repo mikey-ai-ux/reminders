@@ -1,12 +1,31 @@
+@inject IHttpContextAccessor HttpContextAccessor
+
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="@GetServerTheme()">
 
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Reminders</title>
     <base href="/" />
+
+    <script>
+        (function () {
+            try {
+                var attr = document.documentElement.getAttribute('data-theme') || 'dark';
+                var stored = localStorage.getItem('theme');
+                var finalTheme = (stored === 'dark' || stored === 'light') ? stored : attr;
+                document.documentElement.setAttribute('data-theme', finalTheme);
+                localStorage.setItem('theme', finalTheme);
+                document.cookie = 'theme=' + encodeURIComponent(finalTheme) + '; path=/; max-age=31536000; SameSite=Lax';
+            } catch {
+                document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme') || 'dark');
+            }
+        })();
+    </script>
+
     <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="Reminders.Web.styles.css" />
     <HeadOutlet />
 </head>
 
@@ -18,3 +37,11 @@
 </body>
 
 </html>
+
+@code {
+    private string GetServerTheme()
+    {
+        var cookie = HttpContextAccessor.HttpContext?.Request?.Cookies["theme"];
+        return cookie is "dark" or "light" ? cookie : "dark";
+    }
+}

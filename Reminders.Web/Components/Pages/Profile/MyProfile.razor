@@ -9,163 +9,255 @@
 
 <PageTitle>My Profile — Reminders</PageTitle>
 
-<div class="profile-header">
-    <div class="avatar">@GetInitial()</div>
-    <div class="profile-info">
-        <h1>@(currentUser?.DisplayName ?? currentUser?.Email ?? "User")</h1>
-        <p class="profile-email">@currentUser?.Email</p>
-        <span class="tier-badge tier-@(currentUser?.SubscriptionTier.ToString().ToLower())">
-            @currentUser?.SubscriptionTier Plan
-        </span>
-    </div>
-</div>
-
-<div class="profile-tabs">
-    <button class="tab @(activeTab == "info" ? "active" : "")" @onclick='() => activeTab = "info"'>Registration Info</button>
-    <button class="tab @(activeTab == "sub" ? "active" : "")" @onclick='() => activeTab = "sub"'>Subscription</button>
-    <button class="tab @(activeTab == "history" ? "active" : "")" @onclick='() => activeTab = "history"'>Payment History</button>
-</div>
-
-@if (activeTab == "info")
+@if (isLoading)
 {
-    <div class="tab-content card">
-        <h2>Registration Info</h2>
-        @if (!string.IsNullOrEmpty(successMessage)) { <div class="alert alert-success">@successMessage</div> }
-        <EditForm Model="editModel" OnValidSubmit="SaveProfile" FormName="profile-edit">
-            <DataAnnotationsValidator />
-            <div class="form-group">
-                <label>Display Name</label>
-                <InputText @bind-Value="editModel.DisplayName" class="form-input" />
-            </div>
-            <div class="form-group">
-                <label>Email</label>
-                <input type="email" value="@currentUser?.Email" class="form-input" disabled />
-            </div>
-            <div class="form-group">
-                <label>Timezone</label>
-                <InputSelect @bind-Value="editModel.TimeZoneId" class="form-input">
-                    <option value="UTC">UTC</option>
-                    <option value="America/Los_Angeles">Pacific Time</option>
-                    <option value="America/New_York">Eastern Time</option>
-                    <option value="Europe/London">London</option>
-                    <option value="Europe/Paris">Paris</option>
-                    <option value="Asia/Tokyo">Tokyo</option>
-                </InputSelect>
-            </div>
-            <button type="submit" class="btn btn-primary">Save Changes</button>
-        </EditForm>
-
-        <div class="cal-subscribe card-section">
-            <h3>📅 Mobile Calendar Sync</h3>
-            <p class="muted">Subscribe to your reminders in your phone's native calendar app — reminders appear as events with built-in notifications. Works on iOS, Android, and any calendar that supports iCal.</p>
-
-            <div class="cal-url-box">
-                <input type="text" readonly value="@CalendarUrl" class="cal-url-input" />
-                <button class="btn btn-secondary" @onclick="CopyCalendarUrl">
-                    @(copied ? "✅ Copied!" : "📋 Copy Link")
-                </button>
-            </div>
-
-            <div class="cal-instructions">
-                <details>
-                    <summary>📱 How to subscribe on iPhone / iPad</summary>
-                    <ol>
-                        <li>Open <strong>Settings</strong> → <strong>Calendar</strong> → <strong>Accounts</strong></li>
-                        <li>Tap <strong>Add Account</strong> → <strong>Other</strong></li>
-                        <li>Tap <strong>Add Subscribed Calendar</strong></li>
-                        <li>Paste the link above and tap <strong>Next</strong></li>
-                    </ol>
-                </details>
-                <details>
-                    <summary>🤖 How to subscribe on Android / Google Calendar</summary>
-                    <ol>
-                        <li>Open <strong>Google Calendar</strong> on desktop</li>
-                        <li>Click <strong>+</strong> next to "Other calendars"</li>
-                        <li>Select <strong>From URL</strong></li>
-                        <li>Paste the link above and click <strong>Add Calendar</strong></li>
-                    </ol>
-                </details>
-            </div>
-        </div>
-    </div>
+    <div class="card"><p>Loading profile…</p></div>
 }
-else if (activeTab == "sub")
+else if (currentUser is null)
 {
-    <Subscription />
+    <div class="alert alert-error">Could not load your profile. Please sign in again.</div>
 }
 else
 {
-    <PaymentHistory />
+    <div class="profile-header">
+        <div class="avatar">@GetInitial()</div>
+        <div class="profile-info">
+            <h1>@(currentUser.DisplayName ?? currentUser.Email ?? "User")</h1>
+            <p class="profile-email">@currentUser.Email</p>
+            <span class="tier-badge tier-@(currentUser.SubscriptionTier.ToString().ToLower())">@currentUser.SubscriptionTier Plan</span>
+        </div>
+    </div>
+
+    <div class="profile-tabs">
+        <button class="tab @(activeTab == "info" ? "active" : "")" @onclick='() => activeTab = "info"'>Registration Info</button>
+        <button class="tab @(activeTab == "sub" ? "active" : "")" @onclick='() => activeTab = "sub"'>Subscription</button>
+        <button class="tab @(activeTab == "history" ? "active" : "")" @onclick='() => activeTab = "history"'>Payment History</button>
+    </div>
+
+    @if (activeTab == "info")
+    {
+        <div class="tab-content card">
+            <h2>Registration Info</h2>
+
+            @if (!string.IsNullOrWhiteSpace(successMessage))
+            {
+                <div class="alert alert-success">@successMessage</div>
+            }
+
+            <EditForm Model="editModel" OnValidSubmit="SaveProfile" FormName="profile-edit">
+                <DataAnnotationsValidator />
+
+                <div class="form-group">
+                    <label>Name</label>
+                    <InputText @bind-Value="editModel.DisplayName" class="form-input" />
+                </div>
+
+                <div class="form-group">
+                    <label>Email</label>
+                    <InputText @bind-Value="editModel.Email" class="form-input" />
+                    <div class="confirm-row">
+                        <span class="badge @(currentUser.EmailConfirmed ? "badge-active" : "badge-paused")">
+                            @(currentUser.EmailConfirmed ? "Email confirmed" : "Email not confirmed")
+                        </span>
+                        @if (!currentUser.EmailConfirmed)
+                        {
+                            <button type="button" class="btn btn-sm btn-secondary" @onclick="GenerateEmailConfirmationLink">Generate confirmation link</button>
+                        }
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(emailConfirmationLink))
+                    {
+                        <div class="confirm-help">
+                            <input class="form-input" readonly value="@emailConfirmationLink" />
+                            <button type="button" class="btn btn-sm btn-secondary" @onclick="CopyEmailLink">Copy link</button>
+                        </div>
+                    }
+                </div>
+
+                <div class="form-group">
+                    <label>Phone</label>
+                    <InputText @bind-Value="editModel.PhoneNumber" class="form-input" placeholder="+1 555 123 4567" />
+                    <div class="confirm-row">
+                        <span class="badge @((currentUser.PhoneNumberConfirmed) ? "badge-active" : "badge-paused")">
+                            @(currentUser.PhoneNumberConfirmed ? "Phone confirmed" : "Phone not confirmed")
+                        </span>
+                        @if (!currentUser.PhoneNumberConfirmed && !string.IsNullOrWhiteSpace(editModel.PhoneNumber))
+                        {
+                            <button type="button" class="btn btn-sm btn-secondary" @onclick="GeneratePhoneCode">Send/Generate code</button>
+                        }
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(phoneCodeHint))
+                    {
+                        <div class="confirm-help">
+                            <span class="badge badge-info">Code (dev): @phoneCodeHint</span>
+                        </div>
+                    }
+                    @if (!currentUser.PhoneNumberConfirmed)
+                    {
+                        <div class="confirm-help">
+                            <InputText @bind-Value="phoneCodeInput" class="form-input" placeholder="Enter phone confirmation code" />
+                            <button type="button" class="btn btn-sm btn-primary" @onclick="ConfirmPhoneCode">Confirm phone</button>
+                        </div>
+                    }
+                </div>
+
+                <div class="form-group">
+                    <label>Timezone</label>
+                    <InputSelect @bind-Value="editModel.TimeZoneId" class="form-input">
+                        <option value="UTC">UTC</option>
+                        <option value="America/Los_Angeles">Pacific Time</option>
+                        <option value="America/New_York">Eastern Time</option>
+                        <option value="Europe/London">London</option>
+                        <option value="Europe/Paris">Paris</option>
+                        <option value="Asia/Tokyo">Tokyo</option>
+                    </InputSelect>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </EditForm>
+
+            <div class="cal-subscribe card-section">
+                <h3>📅 Mobile Calendar Sync</h3>
+                <p class="muted">Subscribe in iOS/Android calendar and get native mobile notifications.</p>
+
+                <div class="cal-url-box">
+                    <input type="text" readonly value="@CalendarUrl" class="cal-url-input" />
+                    <button class="btn btn-secondary" @onclick="CopyCalendarUrl">@(copied ? "✅ Copied!" : "📋 Copy Link")</button>
+                </div>
+            </div>
+        </div>
+    }
+    else if (activeTab == "sub")
+    {
+        <Subscription />
+    }
+    else
+    {
+        <PaymentHistory />
+    }
 }
 
 <style>
-.profile-header { display: flex; align-items: center; gap: 1.5rem; margin-bottom: 2rem; padding: 2rem; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 16px; }
-.avatar { width: 72px; height: 72px; background: var(--color-primary); color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: 700; flex-shrink: 0; }
-.profile-info h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 0.25rem; color: var(--color-text); }
-.profile-email { color: var(--color-text-muted); margin: 0 0 0.5rem; font-size: 0.9rem; }
-.tier-badge { font-size: 0.75rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
-.tier-free { background: var(--color-border); color: var(--color-text-muted); }
-.tier-pro { background: rgba(67,97,238,0.15); color: var(--color-primary); }
-.profile-tabs { display: flex; gap: 0.25rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--color-border); }
-.tab { padding: 0.75rem 1.25rem; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-size: 0.9rem; color: var(--color-text-muted); transition: all 0.2s; margin-bottom: -1px; }
+.profile-header { display: flex; align-items: center; gap: 1.25rem; margin-bottom: 1.5rem; padding: 1.5rem; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 16px; }
+.avatar { width: 64px; height: 64px; background: var(--color-primary); color: #fff; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; font-weight: 700; }
+.profile-info h1 { margin: 0 0 0.2rem; }
+.profile-email { margin: 0 0 0.4rem; color: var(--color-text-muted); }
+.profile-tabs { display: flex; gap: .25rem; margin-bottom: 1rem; border-bottom: 1px solid var(--color-border); }
+.tab { padding: .75rem 1rem; border-bottom: 2px solid transparent; color: var(--color-text-muted); }
 .tab.active { color: var(--color-primary); border-bottom-color: var(--color-primary); font-weight: 600; }
-.tab-content.card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 2rem; }
-.tab-content h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 1.5rem; color: var(--color-text); }
-.alert-success { background: rgba(34,197,94,0.1); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.9rem; }
-.cal-subscribe { margin-top: 2rem; padding-top: 2rem; border-top: 1px solid var(--color-border); }
-.cal-subscribe h3 { font-size: 1rem; font-weight: 700; margin-bottom: 0.5rem; }
-.cal-url-box { display: flex; gap: 0.5rem; margin: 1rem 0; align-items: center; }
-.cal-url-input { flex: 1; font-size: 0.8rem; padding: 0.5rem 0.75rem; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg); color: var(--color-text-muted); font-family: monospace; }
-.cal-instructions { display: flex; flex-direction: column; gap: 0.75rem; }
-.cal-instructions details { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 8px; padding: 0.75rem 1rem; }
-.cal-instructions summary { cursor: pointer; font-size: 0.875rem; font-weight: 600; color: var(--color-text); }
-.cal-instructions ol { margin: 0.75rem 0 0 1rem; font-size: 0.825rem; color: var(--color-text-muted); line-height: 1.7; }
+.tab-content.card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 1.5rem; }
+.confirm-row { margin-top: .45rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.confirm-help { margin-top: .5rem; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+.cal-subscribe { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--color-border); }
+.cal-url-box { display: flex; gap: .5rem; margin-top: .75rem; }
+.cal-url-input { flex: 1; font-size: .8rem; padding: .5rem .75rem; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-bg); color: var(--color-text-muted); font-family: monospace; }
 </style>
 
 @code {
     private AppUser? currentUser;
+    private bool isLoading = true;
     private string activeTab = "info";
     private string? successMessage;
+    private bool copied;
+    private string? emailConfirmationLink;
+    private string? phoneCodeHint;
+    private string phoneCodeInput = string.Empty;
+
     private EditProfileModel editModel = new();
-    private bool copied = false;
-
     private string CalendarUrl => $"{Nav.BaseUri}api/calendar/{currentUser?.Id}/reminders.ics";
-
-    private async Task CopyCalendarUrl()
-    {
-        await JS.InvokeVoidAsync("navigator.clipboard.writeText", CalendarUrl);
-        copied = true;
-        StateHasChanged();
-        await Task.Delay(2000);
-        copied = false;
-        StateHasChanged();
-    }
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         currentUser = await UserManager.GetUserAsync(authState.User);
-        if (currentUser != null)
+
+        if (currentUser is not null)
         {
-            editModel.DisplayName = currentUser.DisplayName ?? "";
-            editModel.TimeZoneId = currentUser.TimeZoneId;
+            editModel.DisplayName = currentUser.DisplayName ?? string.Empty;
+            editModel.Email = currentUser.Email ?? string.Empty;
+            editModel.PhoneNumber = currentUser.PhoneNumber ?? string.Empty;
+            editModel.TimeZoneId = string.IsNullOrWhiteSpace(currentUser.TimeZoneId) ? "UTC" : currentUser.TimeZoneId;
         }
+
+        isLoading = false;
     }
 
-    string GetInitial() => (currentUser?.DisplayName ?? currentUser?.Email ?? "?").FirstOrDefault().ToString().ToUpper();
+    private string GetInitial() => (currentUser?.DisplayName ?? currentUser?.Email ?? "?").FirstOrDefault().ToString().ToUpperInvariant();
 
-    async Task SaveProfile()
+    private async Task CopyCalendarUrl()
     {
-        if (currentUser == null) return;
-        currentUser.DisplayName = editModel.DisplayName;
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", CalendarUrl);
+        copied = true;
+        await Task.Delay(1500);
+        copied = false;
+    }
+
+    private async Task GenerateEmailConfirmationLink()
+    {
+        if (currentUser is null || string.IsNullOrWhiteSpace(currentUser.Email)) return;
+
+        var token = await UserManager.GenerateEmailConfirmationTokenAsync(currentUser);
+        var encoded = Uri.EscapeDataString(token);
+        emailConfirmationLink = $"{Nav.BaseUri}confirm-email?userId={Uri.EscapeDataString(currentUser.Id)}&code={encoded}";
+    }
+
+    private async Task CopyEmailLink()
+    {
+        if (!string.IsNullOrWhiteSpace(emailConfirmationLink))
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", emailConfirmationLink);
+    }
+
+    private async Task GeneratePhoneCode()
+    {
+        if (currentUser is null || string.IsNullOrWhiteSpace(editModel.PhoneNumber)) return;
+        phoneCodeHint = await UserManager.GenerateChangePhoneNumberTokenAsync(currentUser, editModel.PhoneNumber);
+    }
+
+    private async Task ConfirmPhoneCode()
+    {
+        if (currentUser is null || string.IsNullOrWhiteSpace(editModel.PhoneNumber) || string.IsNullOrWhiteSpace(phoneCodeInput)) return;
+
+        var ok = await UserManager.VerifyChangePhoneNumberTokenAsync(currentUser, phoneCodeInput, editModel.PhoneNumber);
+        if (!ok)
+        {
+            successMessage = "Invalid phone code.";
+            return;
+        }
+
+        var result = await UserManager.ChangePhoneNumberAsync(currentUser, editModel.PhoneNumber, phoneCodeInput);
+        successMessage = result.Succeeded ? "Phone confirmed successfully." : string.Join("; ", result.Errors.Select(e => e.Description));
+    }
+
+    private async Task SaveProfile()
+    {
+        if (currentUser is null) return;
+
+        currentUser.DisplayName = editModel.DisplayName?.Trim();
         currentUser.TimeZoneId = editModel.TimeZoneId;
-        await UserManager.UpdateAsync(currentUser);
-        successMessage = "Profile saved!";
+
+        if (!string.Equals(currentUser.Email, editModel.Email, StringComparison.OrdinalIgnoreCase))
+        {
+            currentUser.Email = editModel.Email?.Trim();
+            currentUser.UserName = editModel.Email?.Trim();
+            currentUser.EmailConfirmed = false; // requires confirmation again
+        }
+
+        if (!string.Equals(currentUser.PhoneNumber, editModel.PhoneNumber, StringComparison.OrdinalIgnoreCase))
+        {
+            currentUser.PhoneNumber = editModel.PhoneNumber?.Trim();
+            currentUser.PhoneNumberConfirmed = false; // requires confirmation again
+        }
+
+        var result = await UserManager.UpdateAsync(currentUser);
+        successMessage = result.Succeeded
+            ? "Profile saved. If you changed email/phone, confirmation is required before full use."
+            : string.Join("; ", result.Errors.Select(e => e.Description));
     }
 
-    private class EditProfileModel
+    private sealed class EditProfileModel
     {
-        public string DisplayName { get; set; } = "";
+        public string DisplayName { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string PhoneNumber { get; set; } = string.Empty;
         public string TimeZoneId { get; set; } = "UTC";
     }
 }

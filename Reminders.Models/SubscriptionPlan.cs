@@ -7,5 +7,13 @@ public class SubscriptionPlan
     public decimal Price { get; set; }
     public string BillingInterval { get; set; } = "Monthly"; // Monthly, Yearly
     public string AllowedChannelsJson { get; set; } = "[]"; // JSON array of NotificationChannel names
+
+    // Quotas per month
+    public int SmsMonthlyLimit { get; set; } = 0;
+    public int VoiceMonthlyLimit { get; set; } = 0;
+
+    // Optional Stripe price mapping
+    public string? StripePriceId { get; set; }
+
     public int FreeNotificationQuota { get; set; } = 10;
 }

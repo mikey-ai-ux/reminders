@@ -10,6 +10,7 @@ using Reminders.Models.Enums;
 using Reminders.Models.Settings;
 using Stripe;
 using Stripe.Checkout;
+using System.Text.Json;
 
 namespace Reminders.Business.Services;
 
@@ -38,28 +39,66 @@ public class SubscriptionService : ISubscriptionService
 
     public bool IsChannelAllowed(AppUser user, NotificationChannel channel)
     {
-        var channelName = channel.ToString();
-        if (user.SubscriptionTier == SubscriptionTier.Free)
+        var plan = ResolvePlan(user);
+        var allowed = ParseAllowedChannels(plan.AllowedChannelsJson);
+        return allowed.Contains(channel.ToString(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    public async Task<bool> IsChannelWithinQuotaAsync(AppUser user, NotificationChannel channel)
+    {
+        var plan = await GetEffectivePlanAsync(user);
+        if (plan == null) return channel is NotificationChannel.Email or NotificationChannel.Push;
+
+        if (channel == NotificationChannel.SMS)
         {
-            var freeChannels = _config.GetSection("Notifications:FreeChannels")
-                .GetChildren().Select(c => c.Value ?? "").ToArray();
-            if (freeChannels.Length == 0) freeChannels = ["Email", "Push"];
-            return freeChannels.Contains(channelName, StringComparer.OrdinalIgnoreCase);
+            if (plan.SmsMonthlyLimit <= 0) return false;
+            var used = await GetChannelUsageThisMonthAsync(user.Id, NotificationChannel.SMS);
+            return used < plan.SmsMonthlyLimit;
         }
-        var paidChannels = _config.GetSection("Notifications:PaidChannels")
-            .GetChildren().Select(c => c.Value ?? "").ToArray();
-        if (paidChannels.Length == 0) paidChannels = ["Email", "Push", "SMS", "Voice"];
-        return paidChannels.Contains(channelName, StringComparer.OrdinalIgnoreCase);
+
+        if (channel == NotificationChannel.Voice)
+        {
+            if (plan.VoiceMonthlyLimit <= 0) return false;
+            var used = await GetChannelUsageThisMonthAsync(user.Id, NotificationChannel.Voice);
+            return used < plan.VoiceMonthlyLimit;
+        }
+
+        return true;
+    }
+
+    public async Task<SubscriptionQuotaInfo> GetQuotaInfoAsync(AppUser user)
+    {
+        var plan = await GetEffectivePlanAsync(user) ?? ResolvePlan(user);
+
+        var smsUsed = await GetChannelUsageThisMonthAsync(user.Id, NotificationChannel.SMS);
+        var voiceUsed = await GetChannelUsageThisMonthAsync(user.Id, NotificationChannel.Voice);
+
+        return new SubscriptionQuotaInfo
+        {
+            PlanName = plan.Name,
+            SmsUsedThisMonth = smsUsed,
+            SmsLimitPerMonth = plan.SmsMonthlyLimit,
+            VoiceUsedThisMonth = voiceUsed,
+            VoiceLimitPerMonth = plan.VoiceMonthlyLimit
+        };
     }
 
     public async Task<string?> CreateCheckoutSessionAsync(AppUser user, int planId, string successUrl, string cancelUrl)
     {
         try
         {
-            var priceId = _stripeSettings.ProPlanPriceId;
+            var plan = await _db.SubscriptionPlans.AsNoTracking().FirstOrDefaultAsync(p => p.Id == planId);
+            var priceId = plan?.StripePriceId;
+
             if (string.IsNullOrWhiteSpace(priceId))
             {
-                _logger.LogWarning("Stripe ProPlanPriceId not configured");
+                // Backward-compatible fallback
+                priceId = _stripeSettings.ProPlanPriceId;
+            }
+
+            if (string.IsNullOrWhiteSpace(priceId))
+            {
+                _logger.LogWarning("Stripe price id not configured for plan {PlanId}", planId);
                 return null;
             }
 
@@ -77,7 +116,11 @@ public class SubscriptionService : ISubscriptionService
                 CustomerEmail = user.Email,
                 SuccessUrl = successUrl,
                 CancelUrl = cancelUrl,
-                Metadata = new Dictionary<string, string> { { "userId", user.Id } }
+                Metadata = new Dictionary<string, string>
+                {
+                    { "userId", user.Id },
+                    { "planId", planId.ToString() }
+                }
             };
 
             if (!string.IsNullOrWhiteSpace(user.StripeCustomerId))
@@ -85,7 +128,7 @@ public class SubscriptionService : ISubscriptionService
 
             var service = new SessionService();
             var session = await service.CreateAsync(options);
-            _logger.LogInformation("Created Stripe checkout session {SessionId} for user {UserId}", session.Id, user.Id);
+            _logger.LogInformation("Created Stripe checkout session {SessionId} for user {UserId} plan {PlanId}", session.Id, user.Id, planId);
             return session.Url;
         }
         catch (StripeException ex)
@@ -143,12 +186,18 @@ public class SubscriptionService : ISubscriptionService
             {
                 if (stripeEvent.Data.Object is not Session session) break;
                 var userId = session.Metadata?.GetValueOrDefault("userId");
+                var planIdRaw = session.Metadata?.GetValueOrDefault("planId");
                 if (userId == null) break;
                 var user = await _userManager.FindByIdAsync(userId);
                 if (user == null) break;
+
                 user.StripeCustomerId = session.CustomerId;
+
+                if (int.TryParse(planIdRaw, out var parsedPlanId))
+                    user.SubscriptionPlanId = parsedPlanId;
+
                 await _userManager.UpdateAsync(user);
-                _logger.LogInformation("Linked StripeCustomerId {CustomerId} to user {UserId}", session.CustomerId, userId);
+                _logger.LogInformation("Linked Stripe customer and plan for user {UserId}", userId);
                 break;
             }
 
@@ -162,7 +211,6 @@ public class SubscriptionService : ISubscriptionService
                 user.SubscriptionTier = sub.Status is "active" or "trialing" ? SubscriptionTier.Pro : SubscriptionTier.Free;
                 user.SubscriptionExpiresAt = sub.CurrentPeriodEnd;
                 await _userManager.UpdateAsync(user);
-                _logger.LogInformation("Updated subscription for user {UserId}: tier={Tier}, status={Status}", user.Id, user.SubscriptionTier, sub.Status);
                 break;
             }
 
@@ -174,8 +222,8 @@ public class SubscriptionService : ISubscriptionService
                 user.SubscriptionTier = SubscriptionTier.Free;
                 user.SubscriptionExpiresAt = null;
                 user.StripeSubscriptionId = null;
+                user.SubscriptionPlanId = 1;
                 await _userManager.UpdateAsync(user);
-                _logger.LogInformation("Downgraded user {UserId} to Free tier (subscription deleted)", user.Id);
                 break;
             }
 
@@ -183,13 +231,8 @@ public class SubscriptionService : ISubscriptionService
             {
                 if (stripeEvent.Data.Object is not Invoice invoice) break;
                 _logger.LogWarning("Payment failed for customer {CustomerId}, invoice {InvoiceId}", invoice.CustomerId, invoice.Id);
-                // Optionally notify user via email here
                 break;
             }
-
-            default:
-                _logger.LogDebug("Unhandled Stripe event type: {EventType}", stripeEvent.Type);
-                break;
         }
     }
 
@@ -201,6 +244,65 @@ public class SubscriptionService : ISubscriptionService
             .CountAsync(n => n.Reminder!.UserId == userId
                 && n.Status == NotificationStatus.Sent
                 && n.SentAt >= monthStart);
+    }
+
+    private async Task<int> GetChannelUsageThisMonthAsync(string userId, NotificationChannel channel)
+    {
+        var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        return await _db.ReminderNotifications
+            .AsNoTracking()
+            .CountAsync(n => n.Reminder != null
+                && n.Reminder.UserId == userId
+                && n.Channel == channel
+                && n.Status == NotificationStatus.Sent
+                && n.SentAt >= monthStart);
+    }
+
+    private async Task<SubscriptionPlan?> GetEffectivePlanAsync(AppUser user)
+    {
+        if (user.SubscriptionPlanId.HasValue)
+        {
+            var byId = await _db.SubscriptionPlans.AsNoTracking().FirstOrDefaultAsync(p => p.Id == user.SubscriptionPlanId.Value);
+            if (byId != null) return byId;
+        }
+
+        // fallback by tier
+        var fallbackName = user.SubscriptionTier switch
+        {
+            SubscriptionTier.Free => "Free",
+            SubscriptionTier.Pro => "Starter",
+            SubscriptionTier.Business => "Growth",
+            SubscriptionTier.Enterprise => "Scale",
+            _ => "Free"
+        };
+
+        return await _db.SubscriptionPlans.AsNoTracking().FirstOrDefaultAsync(p => p.Name == fallbackName)
+               ?? await _db.SubscriptionPlans.AsNoTracking().OrderBy(p => p.Price).FirstOrDefaultAsync();
+    }
+
+    private SubscriptionPlan ResolvePlan(AppUser user)
+    {
+        // Fast sync fallback for UI checks
+        return user.SubscriptionTier switch
+        {
+            SubscriptionTier.Free => new SubscriptionPlan { Name = "Free", AllowedChannelsJson = "[\"Email\",\"Push\"]", SmsMonthlyLimit = 0, VoiceMonthlyLimit = 0 },
+            SubscriptionTier.Pro => new SubscriptionPlan { Name = "Starter", AllowedChannelsJson = "[\"Email\",\"Push\",\"SMS\",\"Voice\"]", SmsMonthlyLimit = 100, VoiceMonthlyLimit = 10 },
+            SubscriptionTier.Business => new SubscriptionPlan { Name = "Growth", AllowedChannelsJson = "[\"Email\",\"Push\",\"SMS\",\"Voice\"]", SmsMonthlyLimit = 2000, VoiceMonthlyLimit = 200 },
+            SubscriptionTier.Enterprise => new SubscriptionPlan { Name = "Scale", AllowedChannelsJson = "[\"Email\",\"Push\",\"SMS\",\"Voice\"]", SmsMonthlyLimit = 10000, VoiceMonthlyLimit = 1000 },
+            _ => new SubscriptionPlan { Name = "Free", AllowedChannelsJson = "[\"Email\",\"Push\"]" }
+        };
+    }
+
+    private static string[] ParseAllowedChannels(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
     }
 
     private async Task<AppUser?> FindUserByStripeCustomerId(string customerId)
