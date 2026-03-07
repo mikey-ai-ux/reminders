@@ -43,6 +43,7 @@
                 <tr>
                     <th>Reminder</th>
                     <th>Channel</th>
+                    <th>Device</th>
                     <th>Status</th>
                     <th>Scheduled</th>
                     <th>Sent</th>
@@ -53,7 +54,7 @@
             <tbody>
                 @if (!Filtered.Any())
                 {
-                    <tr><td colspan="7" class="empty">No history found for current filters.</td></tr>
+                    <tr><td colspan="8" class="empty">No history found for current filters.</td></tr>
                 }
                 else
                 {
@@ -62,6 +63,7 @@
                         <tr>
                             <td>@n.ReminderName</td>
                             <td>@n.Channel</td>
+                            <td>@(n.Channel == NotificationChannel.Push ? (string.IsNullOrWhiteSpace(n.DeviceType) ? "Unknown" : n.DeviceType) : "-")</td>
                             <td><span class="badge @(n.Status == NotificationStatus.Sent ? "badge-active" : n.Status == NotificationStatus.Failed ? "badge-paused" : "badge-inactive")">@n.Status</span></td>
                             <td>@FormatUtc(n.ScheduledForUtc, n.TimeZoneId)</td>
                             <td>@(n.SentAt.HasValue ? FormatUtc(n.SentAt.Value, n.TimeZoneId) : "-")</td>

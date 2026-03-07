@@ -20,6 +20,7 @@ public class ReminderNotification
     public string ReminderName { get; set; } = string.Empty;
     public string MessageSnapshot { get; set; } = string.Empty;
     public string TimeZoneId { get; set; } = "UTC";
+    public string? DeviceType { get; set; }
     public DateTime ScheduledForUtc { get; set; }
 
     public DateTime? SentAt { get; set; }

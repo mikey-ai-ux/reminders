@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Reminders.Business.Interfaces;
 using Reminders.Data;
@@ -33,6 +34,21 @@ public class NotificationService : INotificationService
 
     public async Task DispatchAsync(Reminder reminder, NotificationChannel channel, AppUser user)
     {
+        string? deviceTypeSnapshot = null;
+        if (channel == NotificationChannel.Push)
+        {
+            var deviceTypes = await _db.PushSubscriptions
+                .AsNoTracking()
+                .Where(x => x.UserId == user.Id)
+                .Select(x => x.DeviceType)
+                .Distinct()
+                .ToListAsync();
+
+            deviceTypeSnapshot = deviceTypes.Count == 0
+                ? "Unknown"
+                : string.Join(", ", deviceTypes.Where(x => !string.IsNullOrWhiteSpace(x)).OrderBy(x => x));
+        }
+
         var notification = new ReminderNotification
         {
             ReminderId = reminder.Id,
@@ -43,6 +59,7 @@ public class NotificationService : INotificationService
                 ? reminder.Name
                 : $"{reminder.Name}: {reminder.Description}",
             TimeZoneId = reminder.TimeZoneId,
+            DeviceType = deviceTypeSnapshot,
             ScheduledForUtc = reminder.OccursAt,
             CreatedAt = DateTime.UtcNow
         };

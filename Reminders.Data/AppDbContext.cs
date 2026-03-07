@@ -50,6 +50,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
             e.Property(rn => rn.ReminderName).HasMaxLength(200).IsRequired();
             e.Property(rn => rn.MessageSnapshot).HasMaxLength(2000).IsRequired();
             e.Property(rn => rn.TimeZoneId).HasMaxLength(100).HasDefaultValue("UTC");
+            e.Property(rn => rn.DeviceType).HasMaxLength(80);
             e.HasOne(rn => rn.Reminder)
              .WithMany(r => r.Notifications)
              .HasForeignKey(rn => rn.ReminderId)
@@ -80,6 +81,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
             e.Property(p => p.Endpoint).HasMaxLength(2048).IsRequired();
             e.Property(p => p.P256dh).HasMaxLength(512).IsRequired();
             e.Property(p => p.Auth).HasMaxLength(256).IsRequired();
+            e.Property(p => p.DeviceType).HasMaxLength(80).HasDefaultValue("Unknown");
             e.HasOne(p => p.User)
              .WithMany(u => u.PushSubscriptions)
              .HasForeignKey(p => p.UserId)
