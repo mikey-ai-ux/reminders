@@ -1,5 +1,7 @@
 @inject IReminderService ReminderSvc
 @inject ISubscriptionService SubSvc
+@inject IConfiguration Config
+@inject IJSRuntime JS
 
 <div class="form-modal">
     <div class="form-modal-header">
@@ -125,6 +127,24 @@
                     </label>
                 }
             </div>
+
+            @if (model.Channels.Contains(NotificationChannel.Push))
+            {
+                <div class="push-register-box">
+                    <div class="push-text">
+                        <strong>Push notifications require device registration.</strong>
+                        <div>Open this website on each target device and register it once.</div>
+                    </div>
+                    <div class="push-actions">
+                        <button type="button" class="btn btn-secondary" @onclick="RegisterCurrentDevice" disabled="@registeringDevice">@(registeringDevice ? "Registering..." : "Register current device")</button>
+                        <button type="button" class="btn btn-ghost" @onclick="UnregisterCurrentDevice">Unregister device</button>
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(pushDeviceStatus))
+                    {
+                        <div class="alert alert-info">@pushDeviceStatus</div>
+                    }
+                </div>
+            }
         </div>
 
         <div class="form-actions">
@@ -153,6 +173,9 @@
 .channel-pill input { display:none; }
 .pill-label { flex:1; }
 .pro-badge { font-size:.65rem; background:var(--color-primary); color:#fff; padding:2px 6px; border-radius:12px; }
+.push-register-box { margin-top:.75rem; border:1px dashed var(--color-border); border-radius:10px; padding:.75rem; background:var(--color-surface-2); }
+.push-text { font-size:.82rem; color:var(--color-text-muted); margin-bottom:.5rem; }
+.push-actions { display:flex; gap:.5rem; flex-wrap:wrap; }
 .form-actions { display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem; }
 @@media (max-width: 640px) { .form-row,.channel-checkboxes { grid-template-columns:1fr; } }
 </style>
@@ -168,6 +191,8 @@
     private bool isSaving;
     private string? errorMessage;
     private string? quotaWarning;
+    private bool registeringDevice;
+    private string? pushDeviceStatus;
 
     private static readonly string[] IconChoices = ["🔔","💊","🏠","💼","📅","💳","🚗","📞","🧾","🎯"];
 
@@ -256,6 +281,48 @@
     void OnTimeChanged(ChangeEventArgs e)
     {
         model.TimeOfDay = e.Value?.ToString() ?? model.TimeOfDay;
+    }
+
+    private async Task RegisterCurrentDevice()
+    {
+        try
+        {
+            registeringDevice = true;
+            pushDeviceStatus = null;
+
+            var vapidPublic = Config["Vapid:PublicKey"];
+            if (string.IsNullOrWhiteSpace(vapidPublic) || vapidPublic.Contains("YOUR_"))
+            {
+                pushDeviceStatus = "VAPID public key is not configured yet.";
+                return;
+            }
+
+            var ok = await JS.InvokeAsync<bool>("registerPushSubscription", vapidPublic);
+            pushDeviceStatus = ok
+                ? "Current device registered for push successfully."
+                : "Could not register this device. Please allow notifications and try again.";
+        }
+        catch (Exception ex)
+        {
+            pushDeviceStatus = $"Push registration failed: {ex.Message}";
+        }
+        finally
+        {
+            registeringDevice = false;
+        }
+    }
+
+    private async Task UnregisterCurrentDevice()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("unregisterPushSubscription");
+            pushDeviceStatus = "Current device unregistered from push.";
+        }
+        catch (Exception ex)
+        {
+            pushDeviceStatus = $"Unregister failed: {ex.Message}";
+        }
     }
 
     private async Task HandleSubmit()
