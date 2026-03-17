@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Reminders.Data;
 
@@ -11,9 +12,11 @@ using Reminders.Data;
 namespace Reminders.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260304083827_AddReminderIconFields")]
+    partial class AddReminderIconFields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -218,9 +221,6 @@ namespace Reminders.Data.Migrations
                     b.Property<DateTime?>("SubscriptionExpiresAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<int?>("SubscriptionPlanId")
-                        .HasColumnType("int");
-
                     b.Property<int>("SubscriptionTier")
                         .HasColumnType("int");
 
@@ -248,8 +248,6 @@ namespace Reminders.Data.Migrations
                         .HasDatabaseName("UserNameIndex")
                         .HasFilter("[NormalizedUserName] IS NOT NULL");
 
-                    b.HasIndex("SubscriptionPlanId");
-
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
@@ -268,13 +266,6 @@ namespace Reminders.Data.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
-
-                    b.Property<string>("DeviceType")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(80)
-                        .HasColumnType("nvarchar(80)")
-                        .HasDefaultValue("Unknown");
 
                     b.Property<string>("Endpoint")
                         .IsRequired()
@@ -400,38 +391,14 @@ namespace Reminders.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("DeviceType")
-                        .HasMaxLength(80)
-                        .HasColumnType("nvarchar(80)");
-
-                    b.Property<string>("MessageSnapshot")
-                        .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
                     b.Property<int>("ReminderId")
                         .HasColumnType("int");
-
-                    b.Property<string>("ReminderName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<DateTime>("ScheduledForUtc")
-                        .HasColumnType("datetime2");
 
                     b.Property<DateTime?>("SentAt")
                         .HasColumnType("datetime2");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
-
-                    b.Property<string>("TimeZoneId")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)")
-                        .HasDefaultValue("UTC");
 
                     b.HasKey("Id");
 
@@ -468,16 +435,6 @@ namespace Reminders.Data.Migrations
                         .HasPrecision(10, 2)
                         .HasColumnType("decimal(10,2)");
 
-                    b.Property<int>("SmsMonthlyLimit")
-                        .HasColumnType("int");
-
-                    b.Property<string>("StripePriceId")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<int>("VoiceMonthlyLimit")
-                        .HasColumnType("int");
-
                     b.HasKey("Id");
 
                     b.ToTable("SubscriptionPlans");
@@ -490,9 +447,7 @@ namespace Reminders.Data.Migrations
                             BillingInterval = "Monthly",
                             FreeNotificationQuota = 10,
                             Name = "Free",
-                            Price = 0m,
-                            SmsMonthlyLimit = 0,
-                            VoiceMonthlyLimit = 0
+                            Price = 0m
                         },
                         new
                         {
@@ -500,32 +455,8 @@ namespace Reminders.Data.Migrations
                             AllowedChannelsJson = "[\"Email\",\"Push\",\"SMS\",\"Voice\"]",
                             BillingInterval = "Monthly",
                             FreeNotificationQuota = 1000,
-                            Name = "Starter",
-                            Price = 9.99m,
-                            SmsMonthlyLimit = 100,
-                            VoiceMonthlyLimit = 10
-                        },
-                        new
-                        {
-                            Id = 3,
-                            AllowedChannelsJson = "[\"Email\",\"Push\",\"SMS\",\"Voice\"]",
-                            BillingInterval = "Monthly",
-                            FreeNotificationQuota = 1000,
-                            Name = "Growth",
-                            Price = 29.99m,
-                            SmsMonthlyLimit = 2000,
-                            VoiceMonthlyLimit = 200
-                        },
-                        new
-                        {
-                            Id = 4,
-                            AllowedChannelsJson = "[\"Email\",\"Push\",\"SMS\",\"Voice\"]",
-                            BillingInterval = "Monthly",
-                            FreeNotificationQuota = 1000,
-                            Name = "Scale",
-                            Price = 99.99m,
-                            SmsMonthlyLimit = 10000,
-                            VoiceMonthlyLimit = 1000
+                            Name = "Pro",
+                            Price = 9.99m
                         });
                 });
 
@@ -578,16 +509,6 @@ namespace Reminders.Data.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("Reminders.Models.AppUser", b =>
-                {
-                    b.HasOne("Reminders.Models.SubscriptionPlan", "SubscriptionPlan")
-                        .WithMany()
-                        .HasForeignKey("SubscriptionPlanId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("SubscriptionPlan");
                 });
 
             modelBuilder.Entity("Reminders.Models.PushSubscriptionRecord", b =>

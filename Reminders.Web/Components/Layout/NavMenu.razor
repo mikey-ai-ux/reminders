@@ -1,33 +1,24 @@
-@inject NavigationManager Navigation
-<AuthorizeView>
-    <Authorized Context="authState">
-        @{ var user = authState.User; }
-    </Authorized>
-</AuthorizeView>
+@rendermode InteractiveServer
 
 <nav class="navbar">
     <div class="navbar-brand">
         <a href="/" class="brand-link">🔔 Reminders</a>
     </div>
-    <button class="nav-toggle" @onclick="ToggleMenu" aria-label="Toggle navigation">
+
+    <button class="nav-toggle" @onclick="ToggleMenu" aria-label="Toggle navigation" aria-expanded="@menuOpen">
         <span></span><span></span><span></span>
     </button>
-    <ul class="nav-links @(menuOpen ? "open" : "")">
-        <li><NavLink href="/" Match="NavLinkMatch.All" class="nav-link">🏠 Home</NavLink></li>
+
+    <ul class="nav-links @(menuOpen ? "open" : "")" @onclick="CloseMenu">
+        <li><NavLink href="/" Match="NavLinkMatch.All" class="nav-link">Home</NavLink></li>
+
         <AuthorizeView>
             <Authorized>
-                <li><NavLink href="/reminders" class="nav-link">🔔 Reminders</NavLink></li>
-                <li class="nav-dropdown">
-                    <button class="nav-link nav-dropdown-toggle" @onclick="ToggleProfile">👤 My Profile ▾</button>
-                    @if (profileOpen)
-                    {
-                        <ul class="dropdown-menu">
-                            <li><NavLink href="/profile" class="dropdown-item">Profile</NavLink></li>
-                            <li><NavLink href="/profile/subscription" class="dropdown-item">Subscription</NavLink></li>
-                            <li><NavLink href="/profile/payment-history" class="dropdown-item">Payment History</NavLink></li>
-                        </ul>
-                    }
-                </li>
+                <li><NavLink href="/reminders" class="nav-link">Reminders</NavLink></li>
+                <li><NavLink href="/history" class="nav-link">History</NavLink></li>
+                <li><NavLink href="/profile" class="nav-link">My Profile</NavLink></li>
+                <li><NavLink href="/profile/subscription" class="nav-link">Subscription</NavLink></li>
+                <li><NavLink href="/profile/payment-history" class="nav-link">Payments</NavLink></li>
                 <li>
                     <form method="post" action="/logout">
                         <AntiforgeryToken />
@@ -36,10 +27,11 @@
                 </li>
             </Authorized>
             <NotAuthorized>
-                <li><NavLink href="/login" class="nav-link">Login</NavLink></li>
-                <li><NavLink href="/register" class="nav-link btn-primary-nav">Sign Up</NavLink></li>
+                <li><NavLink href="/login" class="nav-link btn-auth-login">Login</NavLink></li>
+                <li><NavLink href="/register" class="nav-link btn-primary-nav btn-auth-signup">Sign Up</NavLink></li>
             </NotAuthorized>
         </AuthorizeView>
+
         <li>
             <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">🌙</button>
         </li>
@@ -47,9 +39,8 @@
 </nav>
 
 @code {
-    private bool menuOpen = false;
-    private bool profileOpen = false;
+    private bool menuOpen;
 
-    void ToggleMenu() => menuOpen = !menuOpen;
-    void ToggleProfile() => profileOpen = !profileOpen;
+    private void ToggleMenu() => menuOpen = !menuOpen;
+    private void CloseMenu() => menuOpen = false;
 }

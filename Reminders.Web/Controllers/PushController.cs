@@ -33,12 +33,15 @@ public class PushController : ControllerBase
         var user = await _userManager.GetUserAsync(User);
         if (user == null) return Unauthorized();
 
+        var deviceType = DetectDeviceType(Request.Headers.UserAgent.ToString());
+
         // Avoid duplicate subscriptions
         var existing = _db.PushSubscriptions.FirstOrDefault(s => s.UserId == user.Id && s.Endpoint == request.Endpoint);
         if (existing != null)
         {
             existing.P256dh = request.P256dh;
             existing.Auth = request.Auth;
+            existing.DeviceType = deviceType;
         }
         else
         {
@@ -48,6 +51,7 @@ public class PushController : ControllerBase
                 Endpoint = request.Endpoint,
                 P256dh = request.P256dh,
                 Auth = request.Auth,
+                DeviceType = deviceType,
                 CreatedAt = DateTime.UtcNow
             });
         }
@@ -71,6 +75,20 @@ public class PushController : ControllerBase
         }
 
         return Ok();
+    }
+
+    private static string DetectDeviceType(string userAgent)
+    {
+        if (string.IsNullOrWhiteSpace(userAgent)) return "Unknown";
+        var ua = userAgent.ToLowerInvariant();
+
+        if (ua.Contains("iphone") || ua.Contains("ipad") || ua.Contains("ios")) return "iOS";
+        if (ua.Contains("android")) return "Android";
+        if (ua.Contains("windows")) return "Windows";
+        if (ua.Contains("mac os") || ua.Contains("macintosh")) return "macOS";
+        if (ua.Contains("linux")) return "Linux";
+
+        return "Other";
     }
 }
 

@@ -26,6 +26,14 @@ public class ReminderService : IReminderService
 
     public async Task<Reminder> CreateAsync(Reminder reminder)
     {
+        var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == reminder.UserId);
+        if (user != null && user.SubscriptionTier == Reminders.Models.Enums.SubscriptionTier.Free)
+        {
+            var currentCount = await _db.Reminders.CountAsync(r => r.UserId == reminder.UserId);
+            if (currentCount >= 10)
+                throw new InvalidOperationException("Free plan allows up to 10 reminders. Upgrade to Pro for unlimited reminders.");
+        }
+
         reminder.CreatedAt = DateTime.UtcNow;
         reminder.UpdatedAt = DateTime.UtcNow;
         _db.Reminders.Add(reminder);
@@ -68,5 +76,15 @@ public class ReminderService : IReminderService
         r.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return true;
+    }
+
+    public async Task<List<ReminderNotification>> GetNotificationHistoryAsync(string userId)
+    {
+        return await _db.ReminderNotifications
+            .AsNoTracking()
+            .Include(n => n.Reminder)
+            .Where(n => n.Reminder != null && n.Reminder.UserId == userId)
+            .OrderByDescending(n => n.SentAt ?? n.CreatedAt)
+            .ToListAsync();
     }
 }

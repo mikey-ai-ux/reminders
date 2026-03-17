@@ -1,5 +1,7 @@
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 using Reminders.Business.Interfaces;
 using Reminders.Business.Senders;
 using Reminders.Business.Services;
@@ -93,6 +95,70 @@ app.UseAntiforgery();
 
 // ── API Endpoints ─────────────────────────────────────────────────────────────
 app.MapControllers();
+
+app.MapGet("/challenge/{provider}", (string provider, string? returnUrl) =>
+{
+    var redirect = $"/externallogin-callback?returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}";
+    var props = new AuthenticationProperties { RedirectUri = redirect };
+    return Results.Challenge(props, [provider]);
+});
+
+app.MapGet("/externallogin-callback", async (
+    SignInManager<AppUser> signInManager,
+    UserManager<AppUser> userManager,
+    string? returnUrl) =>
+{
+    var info = await signInManager.GetExternalLoginInfoAsync();
+    if (info is null)
+        return Results.Redirect("/login?error=ExternalLoginFailed");
+
+    var signInResult = await signInManager.ExternalLoginSignInAsync(info.LoginProvider, info.ProviderKey, isPersistent: false, bypassTwoFactor: true);
+    if (signInResult.Succeeded)
+        return Results.Redirect(returnUrl ?? "/reminders");
+
+    var email = info.Principal.FindFirstValue(ClaimTypes.Email)
+               ?? info.Principal.FindFirstValue("email")
+               ?? $"{info.ProviderKey}@{info.LoginProvider}.external";
+
+    var displayName = info.Principal.FindFirstValue(ClaimTypes.Name)
+                   ?? info.Principal.Identity?.Name
+                   ?? email;
+
+    var user = await userManager.FindByEmailAsync(email);
+    if (user is null)
+    {
+        user = new AppUser
+        {
+            UserName = email,
+            Email = email,
+            EmailConfirmed = true,
+            DisplayName = displayName,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var create = await userManager.CreateAsync(user);
+        if (!create.Succeeded)
+            return Results.Redirect("/login?error=AccountCreateFailed");
+    }
+
+    var addLogin = await userManager.AddLoginAsync(user, info);
+    if (!addLogin.Succeeded && addLogin.Errors.Any(e => e.Code != "LoginAlreadyAssociated"))
+        return Results.Redirect("/login?error=ExternalLinkFailed");
+
+    await signInManager.SignInAsync(user, isPersistent: false);
+    return Results.Redirect(returnUrl ?? "/reminders");
+});
+
+app.MapGet("/confirm-email", async (UserManager<AppUser> userManager, string userId, string code) =>
+{
+    var user = await userManager.FindByIdAsync(userId);
+    if (user is null) return Results.Redirect("/profile?confirm=email-failed");
+
+    var result = await userManager.ConfirmEmailAsync(user, code);
+    return result.Succeeded
+        ? Results.Redirect("/profile?confirm=email-ok")
+        : Results.Redirect("/profile?confirm=email-failed");
+});
 
 app.MapPost("/logout", async (SignInManager<AppUser> signInManager) =>
 {

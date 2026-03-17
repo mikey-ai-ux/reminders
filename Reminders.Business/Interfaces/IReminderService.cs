@@ -11,4 +11,5 @@ public interface IReminderService
     Task<bool> DeleteAsync(int id, string userId);
     Task<bool> PauseAsync(int id, string userId);
     Task<bool> ResumeAsync(int id, string userId);
+    Task<List<ReminderNotification>> GetNotificationHistoryAsync(string userId);
 }
