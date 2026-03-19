@@ -333,12 +333,13 @@
             .OrderByDescending(x => x.CreatedAt)
             .ToList();
 
+        var idx = 1;
         foreach (var p in pushSubs)
         {
-            var label = string.IsNullOrWhiteSpace(p.DeviceType)
-                ? ShortValue(p.Endpoint)
-                : $"{p.DeviceType} • {ShortValue(p.Endpoint)}";
+            var type = string.IsNullOrWhiteSpace(p.DeviceType) ? "Unknown Device" : p.DeviceType;
+            var label = $"{type} #{idx}";
             availablePushTargets.Add(new TargetOption(p.Endpoint, label));
+            idx++;
         }
 
         if (!string.IsNullOrWhiteSpace(CurrentUser.Email) && CurrentUser.EmailConfirmed)
@@ -583,7 +584,11 @@
         if (model.Channels.Contains(NotificationChannel.Push))
         {
             foreach (var val in selectedPushTargets)
-                list.Add(new ReminderTarget { Channel = NotificationChannel.Push, TargetType = "PushDevice", TargetValue = val, Label = ShortValue(val) });
+            {
+                var label = availablePushTargets.FirstOrDefault(x => string.Equals(x.Value, val, StringComparison.OrdinalIgnoreCase))?.Label
+                            ?? "Push Device";
+                list.Add(new ReminderTarget { Channel = NotificationChannel.Push, TargetType = "PushDevice", TargetValue = val, Label = label });
+            }
         }
 
         if (model.Channels.Contains(NotificationChannel.Email))

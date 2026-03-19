@@ -160,6 +160,30 @@ app.MapGet("/confirm-email", async (UserManager<AppUser> userManager, string use
         : Results.Redirect("/profile?confirm=email-failed");
 });
 
+app.MapGet("/confirm-contact-endpoint", async (AppDbContext db, int endpointId, string token) =>
+{
+    var endpoint = await db.UserContactEndpoints.FirstOrDefaultAsync(x => x.Id == endpointId);
+    if (endpoint is null)
+        return Results.Redirect("/profile?confirm=endpoint-missing");
+
+    if (endpoint.IsConfirmed)
+        return Results.Redirect("/profile?confirm=endpoint-already");
+
+    if (string.IsNullOrWhiteSpace(endpoint.VerificationToken)
+        || !string.Equals(endpoint.VerificationToken, token, StringComparison.Ordinal)
+        || (endpoint.VerificationExpiresAtUtc.HasValue && endpoint.VerificationExpiresAtUtc.Value < DateTime.UtcNow))
+    {
+        return Results.Redirect("/profile?confirm=endpoint-failed");
+    }
+
+    endpoint.IsConfirmed = true;
+    endpoint.VerificationToken = null;
+    endpoint.VerificationExpiresAtUtc = null;
+    await db.SaveChangesAsync();
+
+    return Results.Redirect("/profile?confirm=endpoint-ok");
+});
+
 app.MapPost("/logout", async (SignInManager<AppUser> signInManager) =>
 {
     await signInManager.SignOutAsync();

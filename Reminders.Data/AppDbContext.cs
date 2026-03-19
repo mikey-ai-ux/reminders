@@ -108,6 +108,8 @@ public class AppDbContext : IdentityDbContext<AppUser>
             e.Property(x => x.UserId).IsRequired();
             e.Property(x => x.Value).HasMaxLength(320).IsRequired();
             e.Property(x => x.Label).HasMaxLength(100);
+            e.Property(x => x.VerificationToken).HasMaxLength(120);
+            e.Property(x => x.VerificationCode).HasMaxLength(20);
             e.HasOne(x => x.User)
              .WithMany(u => u.ContactEndpoints)
              .HasForeignKey(x => x.UserId)

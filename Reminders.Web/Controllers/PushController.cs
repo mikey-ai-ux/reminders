@@ -82,13 +82,20 @@ public class PushController : ControllerBase
         if (string.IsNullOrWhiteSpace(userAgent)) return "Unknown";
         var ua = userAgent.ToLowerInvariant();
 
-        if (ua.Contains("iphone") || ua.Contains("ipad") || ua.Contains("ios")) return "iOS";
-        if (ua.Contains("android")) return "Android";
-        if (ua.Contains("windows")) return "Windows";
-        if (ua.Contains("mac os") || ua.Contains("macintosh")) return "macOS";
-        if (ua.Contains("linux")) return "Linux";
+        var os = ua.Contains("iphone") || ua.Contains("ipad") || ua.Contains("ios") ? "iOS"
+            : ua.Contains("android") ? "Android"
+            : ua.Contains("windows") ? "Windows"
+            : (ua.Contains("mac os") || ua.Contains("macintosh")) ? "macOS"
+            : ua.Contains("linux") ? "Linux"
+            : "Other";
 
-        return "Other";
+        var browser = ua.Contains("edg/") ? "Edge"
+            : ua.Contains("chrome/") ? "Chrome"
+            : ua.Contains("safari/") && !ua.Contains("chrome/") ? "Safari"
+            : ua.Contains("firefox/") ? "Firefox"
+            : "Browser";
+
+        return $"{os} / {browser}";
     }
 }
 

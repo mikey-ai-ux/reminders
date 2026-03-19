@@ -180,7 +180,20 @@ else
                                 <div class="confirm-help">
                                     @if (!ep.IsConfirmed)
                                     {
-                                        <button type="button" class="btn btn-sm btn-secondary" @onclick="() => ConfirmEndpoint(ep.Id)">Confirm</button>
+                                        if (ep.Channel == Reminders.Models.Enums.NotificationChannel.Email)
+                                        {
+                                            <button type="button" class="btn btn-sm btn-secondary" @onclick="() => GenerateEndpointEmailLink(ep.Id)">Generate link</button>
+                                            @if (endpointEmailLinks.TryGetValue(ep.Id, out var link) && !string.IsNullOrWhiteSpace(link))
+                                            {
+                                                <button type="button" class="btn btn-sm btn-secondary" @onclick="() => CopyText(link)">Copy link</button>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="btn btn-sm btn-secondary" @onclick="() => GenerateEndpointPhoneCode(ep.Id)">Generate code</button>
+                                            <input class="form-input" value="@GetEndpointPhoneCode(ep.Id)" @onchange="(e) => SetEndpointPhoneCode(ep.Id, e.Value?.ToString())" placeholder="Code" />
+                                            <button type="button" class="btn btn-sm btn-primary" @onclick="() => ConfirmEndpointPhoneCode(ep.Id)">Confirm</button>
+                                        }
                                     }
                                     <button type="button" class="btn btn-sm btn-danger-ghost" @onclick="() => RemoveEndpoint(ep.Id)">Remove</button>
                                 </div>
@@ -237,6 +250,8 @@ else
     private string newEndpointChannel = "Email";
     private string newEndpointValue = string.Empty;
     private string newEndpointLabel = string.Empty;
+    private Dictionary<int, string> endpointEmailLinks = new();
+    private Dictionary<int, string> endpointPhoneCodes = new();
 
     private EditProfileModel editModel = new();
     private string CalendarUrl => $"{Nav.BaseUri}api/calendar/{currentUser?.Id}/reminders.ics";
@@ -338,6 +353,24 @@ else
         var channel = newEndpointChannel == "Email" ? Reminders.Models.Enums.NotificationChannel.Email : Reminders.Models.Enums.NotificationChannel.SMS;
         var value = newEndpointValue.Trim();
 
+        if (channel == Reminders.Models.Enums.NotificationChannel.Email)
+        {
+            if (!new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(value))
+            {
+                successMessage = "Invalid email format.";
+                return;
+            }
+        }
+        else
+        {
+            // Basic E.164-like validation
+            if (!System.Text.RegularExpressions.Regex.IsMatch(value, "^\\+?[1-9]\\d{7,14}$"))
+            {
+                successMessage = "Invalid phone format. Use international format like +123456789.";
+                return;
+            }
+        }
+
         var exists = Db.UserContactEndpoints.Any(x => x.UserId == currentUser.Id && x.Channel == channel && x.Value == value);
         if (exists)
         {
@@ -352,6 +385,9 @@ else
             Value = value,
             Label = string.IsNullOrWhiteSpace(newEndpointLabel) ? null : newEndpointLabel.Trim(),
             IsConfirmed = false,
+            VerificationToken = Guid.NewGuid().ToString("N"),
+            VerificationCode = Random.Shared.Next(100000, 999999).ToString(),
+            VerificationExpiresAtUtc = DateTime.UtcNow.AddMinutes(30),
             CreatedAt = DateTime.UtcNow
         };
 
@@ -364,17 +400,63 @@ else
         successMessage = "Endpoint added. Please confirm it before using it in reminders.";
     }
 
-    private async Task ConfirmEndpoint(int id)
+    private async Task GenerateEndpointEmailLink(int id)
     {
-        var ep = Db.UserContactEndpoints.FirstOrDefault(x => x.Id == id && currentUser != null && x.UserId == currentUser.Id);
+        var ep = Db.UserContactEndpoints.FirstOrDefault(x => x.Id == id && currentUser != null && x.UserId == currentUser.Id && x.Channel == Reminders.Models.Enums.NotificationChannel.Email);
         if (ep == null) return;
 
+        ep.VerificationToken = Guid.NewGuid().ToString("N");
+        ep.VerificationExpiresAtUtc = DateTime.UtcNow.AddMinutes(30);
+        await Db.SaveChangesAsync();
+
+        endpointEmailLinks[id] = $"{Nav.BaseUri}confirm-contact-endpoint?endpointId={id}&token={ep.VerificationToken}";
+    }
+
+    private async Task GenerateEndpointPhoneCode(int id)
+    {
+        var ep = Db.UserContactEndpoints.FirstOrDefault(x => x.Id == id && currentUser != null && x.UserId == currentUser.Id && x.Channel == Reminders.Models.Enums.NotificationChannel.SMS);
+        if (ep == null) return;
+
+        ep.VerificationCode = Random.Shared.Next(100000, 999999).ToString();
+        ep.VerificationExpiresAtUtc = DateTime.UtcNow.AddMinutes(30);
+        await Db.SaveChangesAsync();
+
+        successMessage = $"Phone verification code (dev): {ep.VerificationCode}";
+    }
+
+    private async Task ConfirmEndpointPhoneCode(int id)
+    {
+        var ep = Db.UserContactEndpoints.FirstOrDefault(x => x.Id == id && currentUser != null && x.UserId == currentUser.Id && x.Channel == Reminders.Models.Enums.NotificationChannel.SMS);
+        if (ep == null) return;
+
+        endpointPhoneCodes.TryGetValue(id, out var input);
+        if (string.IsNullOrWhiteSpace(input) || string.IsNullOrWhiteSpace(ep.VerificationCode) || !string.Equals(input.Trim(), ep.VerificationCode, StringComparison.OrdinalIgnoreCase) || (ep.VerificationExpiresAtUtc.HasValue && ep.VerificationExpiresAtUtc.Value < DateTime.UtcNow))
+        {
+            successMessage = "Invalid or expired phone verification code.";
+            return;
+        }
+
         ep.IsConfirmed = true;
+        ep.VerificationCode = null;
+        ep.VerificationExpiresAtUtc = null;
         await Db.SaveChangesAsync();
 
         var inList = contactEndpoints.FirstOrDefault(x => x.Id == id);
         if (inList != null) inList.IsConfirmed = true;
+        endpointPhoneCodes[id] = string.Empty;
     }
+
+    private async Task CopyText(string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", value);
+    }
+
+    private string GetEndpointPhoneCode(int id)
+        => endpointPhoneCodes.TryGetValue(id, out var code) ? code : string.Empty;
+
+    private void SetEndpointPhoneCode(int id, string? code)
+        => endpointPhoneCodes[id] = code ?? string.Empty;
 
     private async Task RemoveEndpoint(int id)
     {
