@@ -23,12 +23,20 @@ public class PushNotificationSender : IPushNotificationSender
         _logger = logger;
     }
 
-    public async Task SendAsync(AppUser user, Reminder reminder)
+    public async Task SendAsync(AppUser user, Reminder reminder, IEnumerable<string>? endpointFilter = null)
     {
-        var subscriptions = await _db.PushSubscriptions
+        var query = _db.PushSubscriptions
             .AsNoTracking()
-            .Where(s => s.UserId == user.Id)
-            .ToListAsync();
+            .Where(s => s.UserId == user.Id);
+
+        if (endpointFilter != null)
+        {
+            var endpoints = endpointFilter.Where(e => !string.IsNullOrWhiteSpace(e)).Distinct().ToList();
+            if (endpoints.Count > 0)
+                query = query.Where(s => endpoints.Contains(s.Endpoint));
+        }
+
+        var subscriptions = await query.ToListAsync();
 
         if (!subscriptions.Any())
         {
