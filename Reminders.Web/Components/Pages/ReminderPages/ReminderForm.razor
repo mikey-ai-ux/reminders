@@ -2,6 +2,7 @@
 @inject ISubscriptionService SubSvc
 @inject IConfiguration Config
 @inject IJSRuntime JS
+@inject Reminders.Data.AppDbContext Db
 
 <div class="form-modal">
     <div class="form-modal-header">
@@ -145,6 +146,70 @@
                     }
                 </div>
             }
+
+            @if (model.Channels.Any())
+            {
+                <div class="target-picker">
+                    <label>Delivery targets per channel</label>
+
+                    @if (model.Channels.Contains(NotificationChannel.Push))
+                    {
+                        <div class="target-group">
+                            <div class="target-title">Push devices</div>
+                            @if (!availablePushTargets.Any())
+                            {
+                                <div class="muted">No push devices registered.</div>
+                            }
+                            else
+                            {
+                                @foreach (var t in availablePushTargets)
+                                {
+                                    var checkedVal = selectedPushTargets.Contains(t.Value);
+                                    <label class="target-option"><input type="checkbox" checked="@checkedVal" @onchange="(e) => ToggleTarget(NotificationChannel.Push, t.Value, (bool)(e.Value ?? false))" /> @t.Label</label>
+                                }
+                            }
+                        </div>
+                    }
+
+                    @if (model.Channels.Contains(NotificationChannel.Email))
+                    {
+                        <div class="target-group">
+                            <div class="target-title">Email targets</div>
+                            @if (!availableEmailTargets.Any())
+                            {
+                                <div class="muted">No confirmed email available.</div>
+                            }
+                            else
+                            {
+                                @foreach (var t in availableEmailTargets)
+                                {
+                                    var checkedVal = selectedEmailTargets.Contains(t.Value);
+                                    <label class="target-option"><input type="checkbox" checked="@checkedVal" @onchange="(e) => ToggleTarget(NotificationChannel.Email, t.Value, (bool)(e.Value ?? false))" /> @t.Label</label>
+                                }
+                            }
+                        </div>
+                    }
+
+                    @if (model.Channels.Contains(NotificationChannel.SMS) || model.Channels.Contains(NotificationChannel.Voice))
+                    {
+                        <div class="target-group">
+                            <div class="target-title">Phone targets (SMS/Voice)</div>
+                            @if (!availablePhoneTargets.Any())
+                            {
+                                <div class="muted">No confirmed phone available.</div>
+                            }
+                            else
+                            {
+                                @foreach (var t in availablePhoneTargets)
+                                {
+                                    var checkedVal = selectedPhoneTargets.Contains(t.Value);
+                                    <label class="target-option"><input type="checkbox" checked="@checkedVal" @onchange="(e) => TogglePhoneTarget(t.Value, (bool)(e.Value ?? false))" /> @t.Label</label>
+                                }
+                            }
+                        </div>
+                    }
+                </div>
+            }
         </div>
 
         <div class="form-actions">
@@ -176,6 +241,10 @@
 .push-register-box { margin-top:.75rem; border:1px dashed var(--color-border); border-radius:10px; padding:.75rem; background:var(--color-surface-2); }
 .push-text { font-size:.82rem; color:var(--color-text-muted); margin-bottom:.5rem; }
 .push-actions { display:flex; gap:.5rem; flex-wrap:wrap; }
+.target-picker { margin-top:.75rem; border:1px solid var(--color-border); border-radius:10px; padding:.75rem; }
+.target-group { margin-top:.6rem; }
+.target-title { font-size:.82rem; font-weight:600; color:var(--color-text); margin-bottom:.25rem; }
+.target-option { display:flex; align-items:center; gap:.45rem; font-size:.84rem; color:var(--color-text-muted); margin:.22rem 0; }
 .form-actions { display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem; }
 @@media (max-width: 640px) { .form-row,.channel-checkboxes { grid-template-columns:1fr; } }
 </style>
@@ -194,6 +263,14 @@
     private bool registeringDevice;
     private string? pushDeviceStatus;
 
+    private readonly List<TargetOption> availablePushTargets = new();
+    private readonly List<TargetOption> availableEmailTargets = new();
+    private readonly List<TargetOption> availablePhoneTargets = new();
+
+    private HashSet<string> selectedPushTargets = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> selectedEmailTargets = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> selectedPhoneTargets = new(StringComparer.OrdinalIgnoreCase);
+
     private static readonly string[] IconChoices = ["🔔","💊","🏠","💼","📅","💳","🚗","📞","🧾","🎯"];
 
     private static readonly (string Id, string DisplayName)[] CommonTimezones =
@@ -206,7 +283,7 @@
         ("Asia/Tokyo", "Tokyo")
     ];
 
-    protected override void OnParametersSet()
+    protected override async Task OnParametersSetAsync()
     {
         if (Reminder is not null)
         {
@@ -238,8 +315,67 @@
             model = new ReminderFormModel();
         }
 
-        _ = RefreshQuotaWarning();
+        await LoadAvailableTargetsAsync();
+        LoadSelectedTargetsFromReminder();
+        await RefreshQuotaWarning();
     }
+
+    private async Task LoadAvailableTargetsAsync()
+    {
+        availablePushTargets.Clear();
+        availableEmailTargets.Clear();
+        availablePhoneTargets.Clear();
+
+        if (CurrentUser is null) return;
+
+        var pushSubs = Db.PushSubscriptions
+            .Where(x => x.UserId == CurrentUser.Id)
+            .OrderByDescending(x => x.CreatedAt)
+            .ToList();
+
+        foreach (var p in pushSubs)
+        {
+            var label = string.IsNullOrWhiteSpace(p.DeviceType)
+                ? ShortValue(p.Endpoint)
+                : $"{p.DeviceType} • {ShortValue(p.Endpoint)}";
+            availablePushTargets.Add(new TargetOption(p.Endpoint, label));
+        }
+
+        if (!string.IsNullOrWhiteSpace(CurrentUser.Email) && CurrentUser.EmailConfirmed)
+            availableEmailTargets.Add(new TargetOption(CurrentUser.Email, CurrentUser.Email));
+
+        if (!string.IsNullOrWhiteSpace(CurrentUser.PhoneNumber) && CurrentUser.PhoneNumberConfirmed)
+            availablePhoneTargets.Add(new TargetOption(CurrentUser.PhoneNumber, CurrentUser.PhoneNumber));
+    }
+
+    private void LoadSelectedTargetsFromReminder()
+    {
+        selectedPushTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        selectedEmailTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        selectedPhoneTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (Reminder?.Targets == null) return;
+
+        foreach (var t in Reminder.Targets)
+        {
+            switch (t.Channel)
+            {
+                case NotificationChannel.Push:
+                    selectedPushTargets.Add(t.TargetValue);
+                    break;
+                case NotificationChannel.Email:
+                    selectedEmailTargets.Add(t.TargetValue);
+                    break;
+                case NotificationChannel.SMS:
+                case NotificationChannel.Voice:
+                    selectedPhoneTargets.Add(t.TargetValue);
+                    break;
+            }
+        }
+    }
+
+    private static string ShortValue(string value)
+        => string.IsNullOrWhiteSpace(value) ? "(unknown)" : (value.Length > 42 ? value[..42] + "…" : value);
 
     private async Task RefreshQuotaWarning()
     {
@@ -270,7 +406,32 @@
     async Task ToggleChannel(NotificationChannel ch, bool value)
     {
         if (value) model.Channels.Add(ch); else model.Channels.Remove(ch);
+
+        if (!value)
+        {
+            if (ch == NotificationChannel.Push) selectedPushTargets.Clear();
+            if (ch == NotificationChannel.Email) selectedEmailTargets.Clear();
+            if (ch == NotificationChannel.SMS || ch == NotificationChannel.Voice) selectedPhoneTargets.Clear();
+        }
+
         await RefreshQuotaWarning();
+    }
+
+    void ToggleTarget(NotificationChannel ch, string value, bool selected)
+    {
+        var set = ch switch
+        {
+            NotificationChannel.Push => selectedPushTargets,
+            NotificationChannel.Email => selectedEmailTargets,
+            _ => selectedPhoneTargets
+        };
+
+        if (selected) set.Add(value); else set.Remove(value);
+    }
+
+    void TogglePhoneTarget(string value, bool selected)
+    {
+        if (selected) selectedPhoneTargets.Add(value); else selectedPhoneTargets.Remove(value);
     }
 
     void ToggleDay(DayOfWeek day)
@@ -360,6 +521,10 @@
                 Reminder.RecurringInterval = recurring;
                 Reminder.Channels.Clear();
                 foreach (var ch in model.Channels) Reminder.Channels.Add(new ReminderChannel { Channel = ch });
+
+                Reminder.Targets.Clear();
+                foreach (var t in BuildTargets()) Reminder.Targets.Add(t);
+
                 await ReminderSvc.UpdateAsync(Reminder);
             }
             else
@@ -374,7 +539,8 @@
                     OccursAt = localDt.ToUniversalTime(),
                     TimeZoneId = model.TimeZoneId,
                     RecurringInterval = recurring,
-                    Channels = model.Channels.Select(ch => new ReminderChannel { Channel = ch }).ToList()
+                    Channels = model.Channels.Select(ch => new ReminderChannel { Channel = ch }).ToList(),
+                    Targets = BuildTargets()
                 };
                 await ReminderSvc.CreateAsync(reminder);
             }
@@ -391,6 +557,37 @@
         }
     }
 
+    private List<ReminderTarget> BuildTargets()
+    {
+        var list = new List<ReminderTarget>();
+
+        if (model.Channels.Contains(NotificationChannel.Push))
+        {
+            foreach (var val in selectedPushTargets)
+                list.Add(new ReminderTarget { Channel = NotificationChannel.Push, TargetType = "PushDevice", TargetValue = val, Label = ShortValue(val) });
+        }
+
+        if (model.Channels.Contains(NotificationChannel.Email))
+        {
+            foreach (var val in selectedEmailTargets)
+                list.Add(new ReminderTarget { Channel = NotificationChannel.Email, TargetType = "EmailAddress", TargetValue = val, Label = val });
+        }
+
+        if (model.Channels.Contains(NotificationChannel.SMS))
+        {
+            foreach (var val in selectedPhoneTargets)
+                list.Add(new ReminderTarget { Channel = NotificationChannel.SMS, TargetType = "PhoneNumber", TargetValue = val, Label = val });
+        }
+
+        if (model.Channels.Contains(NotificationChannel.Voice))
+        {
+            foreach (var val in selectedPhoneTargets)
+                list.Add(new ReminderTarget { Channel = NotificationChannel.Voice, TargetType = "PhoneNumber", TargetValue = val, Label = val });
+        }
+
+        return list;
+    }
+
     private static string GetChannelEmoji(NotificationChannel ch) => ch switch
     {
         NotificationChannel.Email => "📧",
@@ -399,6 +596,8 @@
         NotificationChannel.Voice => "📞",
         _ => "🔔"
     };
+
+    private sealed record TargetOption(string Value, string Label);
 
     private sealed class ReminderFormModel
     {
