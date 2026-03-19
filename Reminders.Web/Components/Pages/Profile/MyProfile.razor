@@ -140,9 +140,50 @@ else
                             <li>
                                 <div class="dev-main">
                                     <code>@ShortEndpoint(d.Endpoint)</code>
-                                    <span class="muted">Added @d.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                                    <span class="muted">@d.DeviceType • Added @d.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
                                 </div>
                                 <button type="button" class="btn btn-sm btn-danger-ghost" @onclick="() => RemoveDevice(d.Id)">Remove</button>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+
+            <div class="device-list card-section">
+                <h3>📮 Additional Email/Phone Endpoints</h3>
+                <p class="muted">Add and confirm extra endpoints that can be selected per reminder.</p>
+
+                <div class="confirm-help">
+                    <select class="form-input" @bind="newEndpointChannel">
+                        <option value="Email">Email</option>
+                        <option value="SMS">Phone (SMS/Voice)</option>
+                    </select>
+                    <InputText class="form-input" @bind-Value="newEndpointValue" placeholder="email@example.com or +123..." />
+                    <InputText class="form-input" @bind-Value="newEndpointLabel" placeholder="Label (Work, Personal, etc.)" />
+                    <button type="button" class="btn btn-sm btn-primary" @onclick="AddEndpoint">Add endpoint</button>
+                </div>
+
+                @if (!contactEndpoints.Any())
+                {
+                    <p class="muted">No additional endpoints yet.</p>
+                }
+                else
+                {
+                    <ul class="devices">
+                        @foreach (var ep in contactEndpoints)
+                        {
+                            <li>
+                                <div class="dev-main">
+                                    <code>@ep.Value</code>
+                                    <span class="muted">@ep.Channel • @(string.IsNullOrWhiteSpace(ep.Label) ? "No label" : ep.Label) • @(ep.IsConfirmed ? "Confirmed" : "Unconfirmed")</span>
+                                </div>
+                                <div class="confirm-help">
+                                    @if (!ep.IsConfirmed)
+                                    {
+                                        <button type="button" class="btn btn-sm btn-secondary" @onclick="() => ConfirmEndpoint(ep.Id)">Confirm</button>
+                                    }
+                                    <button type="button" class="btn btn-sm btn-danger-ghost" @onclick="() => RemoveEndpoint(ep.Id)">Remove</button>
+                                </div>
                             </li>
                         }
                     </ul>
@@ -191,6 +232,11 @@ else
     private string? phoneCodeHint;
     private string phoneCodeInput = string.Empty;
     private List<PushSubscriptionRecord> pushDevices = new();
+    private List<UserContactEndpoint> contactEndpoints = new();
+
+    private string newEndpointChannel = "Email";
+    private string newEndpointValue = string.Empty;
+    private string newEndpointLabel = string.Empty;
 
     private EditProfileModel editModel = new();
     private string CalendarUrl => $"{Nav.BaseUri}api/calendar/{currentUser?.Id}/reminders.ics";
@@ -208,6 +254,11 @@ else
             editModel.TimeZoneId = string.IsNullOrWhiteSpace(currentUser.TimeZoneId) ? "UTC" : currentUser.TimeZoneId;
 
             pushDevices = Db.PushSubscriptions
+                .Where(x => x.UserId == currentUser.Id)
+                .OrderByDescending(x => x.CreatedAt)
+                .ToList();
+
+            contactEndpoints = Db.UserContactEndpoints
                 .Where(x => x.UserId == currentUser.Id)
                 .OrderByDescending(x => x.CreatedAt)
                 .ToList();
@@ -277,6 +328,63 @@ else
         await Db.SaveChangesAsync();
 
         pushDevices = pushDevices.Where(x => x.Id != id).ToList();
+    }
+
+    private async Task AddEndpoint()
+    {
+        if (currentUser is null) return;
+        if (string.IsNullOrWhiteSpace(newEndpointValue)) return;
+
+        var channel = newEndpointChannel == "Email" ? Reminders.Models.Enums.NotificationChannel.Email : Reminders.Models.Enums.NotificationChannel.SMS;
+        var value = newEndpointValue.Trim();
+
+        var exists = Db.UserContactEndpoints.Any(x => x.UserId == currentUser.Id && x.Channel == channel && x.Value == value);
+        if (exists)
+        {
+            successMessage = "Endpoint already exists.";
+            return;
+        }
+
+        var ep = new UserContactEndpoint
+        {
+            UserId = currentUser.Id,
+            Channel = channel,
+            Value = value,
+            Label = string.IsNullOrWhiteSpace(newEndpointLabel) ? null : newEndpointLabel.Trim(),
+            IsConfirmed = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        Db.UserContactEndpoints.Add(ep);
+        await Db.SaveChangesAsync();
+
+        contactEndpoints.Insert(0, ep);
+        newEndpointValue = string.Empty;
+        newEndpointLabel = string.Empty;
+        successMessage = "Endpoint added. Please confirm it before using it in reminders.";
+    }
+
+    private async Task ConfirmEndpoint(int id)
+    {
+        var ep = Db.UserContactEndpoints.FirstOrDefault(x => x.Id == id && currentUser != null && x.UserId == currentUser.Id);
+        if (ep == null) return;
+
+        ep.IsConfirmed = true;
+        await Db.SaveChangesAsync();
+
+        var inList = contactEndpoints.FirstOrDefault(x => x.Id == id);
+        if (inList != null) inList.IsConfirmed = true;
+    }
+
+    private async Task RemoveEndpoint(int id)
+    {
+        var ep = Db.UserContactEndpoints.FirstOrDefault(x => x.Id == id && currentUser != null && x.UserId == currentUser.Id);
+        if (ep == null) return;
+
+        Db.UserContactEndpoints.Remove(ep);
+        await Db.SaveChangesAsync();
+
+        contactEndpoints = contactEndpoints.Where(x => x.Id != id).ToList();
     }
 
     private async Task SaveProfile()
