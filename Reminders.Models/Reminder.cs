@@ -22,6 +22,7 @@ public class Reminder
     public AppUser? User { get; set; }
     public ICollection<ReminderNotification> Notifications { get; set; } = new List<ReminderNotification>();
     public ICollection<ReminderChannel> Channels { get; set; } = new List<ReminderChannel>();
+    public ICollection<ReminderTarget> Targets { get; set; } = new List<ReminderTarget>();
 }
 
 public class ReminderChannel

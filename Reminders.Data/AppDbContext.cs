@@ -11,6 +11,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<Reminder> Reminders => Set<Reminder>();
     public DbSet<ReminderNotification> ReminderNotifications => Set<ReminderNotification>();
     public DbSet<ReminderChannel> ReminderChannels => Set<ReminderChannel>();
+    public DbSet<ReminderTarget> ReminderTargets => Set<ReminderTarget>();
     public DbSet<SubscriptionPlan> SubscriptionPlans => Set<SubscriptionPlan>();
     public DbSet<PushSubscriptionRecord> PushSubscriptions => Set<PushSubscriptionRecord>();
 
@@ -63,6 +64,18 @@ public class AppDbContext : IdentityDbContext<AppUser>
             e.HasOne(rc => rc.Reminder)
              .WithMany(r => r.Channels)
              .HasForeignKey(rc => rc.ReminderId)
+             .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<ReminderTarget>(e =>
+        {
+            e.HasKey(rt => rt.Id);
+            e.Property(rt => rt.TargetType).HasMaxLength(40).IsRequired();
+            e.Property(rt => rt.TargetValue).HasMaxLength(2048).IsRequired();
+            e.Property(rt => rt.Label).HasMaxLength(120);
+            e.HasOne(rt => rt.Reminder)
+             .WithMany(r => r.Targets)
+             .HasForeignKey(rt => rt.ReminderId)
              .OnDelete(DeleteBehavior.Cascade);
         });
 
