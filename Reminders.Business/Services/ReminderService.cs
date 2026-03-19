@@ -126,10 +126,22 @@ public class ReminderService : IReminderService
                 throw new InvalidOperationException("One or more selected push targets are not registered for this user.");
         }
 
-        // Email requires confirmed email + selected target that matches user's email.
+        var confirmedEndpoints = await _db.UserContactEndpoints
+            .AsNoTracking()
+            .Where(x => x.UserId == reminder.UserId && x.IsConfirmed)
+            .ToListAsync();
+
+        // Email requires at least one confirmed email endpoint and selected targets must belong to confirmed set.
         if (selectedChannels.Contains(Reminders.Models.Enums.NotificationChannel.Email))
         {
-            if (string.IsNullOrWhiteSpace(user.Email) || !user.EmailConfirmed)
+            var allowedEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(user.Email) && user.EmailConfirmed)
+                allowedEmails.Add(user.Email);
+
+            foreach (var ep in confirmedEndpoints.Where(x => x.Channel == Reminders.Models.Enums.NotificationChannel.Email))
+                allowedEmails.Add(ep.Value);
+
+            if (allowedEmails.Count == 0)
                 throw new InvalidOperationException("Email channel requires a registered and confirmed email.");
 
             var emailTargets = reminder.Targets
@@ -140,17 +152,24 @@ public class ReminderService : IReminderService
             if (emailTargets.Count == 0)
                 throw new InvalidOperationException("Select at least one email target for Email channel.");
 
-            if (emailTargets.Any(t => !string.Equals(t, user.Email, StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidOperationException("Selected email target is not valid for current user.");
+            if (emailTargets.Any(t => !allowedEmails.Contains(t)))
+                throw new InvalidOperationException("Selected email target is not valid/confirmed for current user.");
         }
 
-        // SMS/Voice require confirmed phone + selected target that matches user's phone.
+        // SMS/Voice require at least one confirmed phone endpoint and selected targets must belong to confirmed set.
         var hasPhoneChannel = selectedChannels.Contains(Reminders.Models.Enums.NotificationChannel.SMS)
                               || selectedChannels.Contains(Reminders.Models.Enums.NotificationChannel.Voice);
 
         if (hasPhoneChannel)
         {
-            if (string.IsNullOrWhiteSpace(user.PhoneNumber) || !user.PhoneNumberConfirmed)
+            var allowedPhones = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(user.PhoneNumber) && user.PhoneNumberConfirmed)
+                allowedPhones.Add(user.PhoneNumber);
+
+            foreach (var ep in confirmedEndpoints.Where(x => x.Channel == Reminders.Models.Enums.NotificationChannel.SMS || x.Channel == Reminders.Models.Enums.NotificationChannel.Voice))
+                allowedPhones.Add(ep.Value);
+
+            if (allowedPhones.Count == 0)
                 throw new InvalidOperationException("SMS/Voice channels require a registered and confirmed phone number.");
 
             var phoneTargets = reminder.Targets
@@ -162,8 +181,8 @@ public class ReminderService : IReminderService
             if (phoneTargets.Count == 0)
                 throw new InvalidOperationException("Select at least one phone target for SMS/Voice channels.");
 
-            if (phoneTargets.Any(t => !string.Equals(t, user.PhoneNumber, StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidOperationException("Selected phone target is not valid for current user.");
+            if (phoneTargets.Any(t => !allowedPhones.Contains(t)))
+                throw new InvalidOperationException("Selected phone target is not valid/confirmed for current user.");
         }
 
         // Ensure targets are provided only for selected channels.

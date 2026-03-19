@@ -14,6 +14,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<ReminderTarget> ReminderTargets => Set<ReminderTarget>();
     public DbSet<SubscriptionPlan> SubscriptionPlans => Set<SubscriptionPlan>();
     public DbSet<PushSubscriptionRecord> PushSubscriptions => Set<PushSubscriptionRecord>();
+    public DbSet<UserContactEndpoint> UserContactEndpoints => Set<UserContactEndpoint>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -98,6 +99,18 @@ public class AppDbContext : IdentityDbContext<AppUser>
             e.HasOne(p => p.User)
              .WithMany(u => u.PushSubscriptions)
              .HasForeignKey(p => p.UserId)
+             .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<UserContactEndpoint>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.UserId).IsRequired();
+            e.Property(x => x.Value).HasMaxLength(320).IsRequired();
+            e.Property(x => x.Label).HasMaxLength(100);
+            e.HasOne(x => x.User)
+             .WithMany(u => u.ContactEndpoints)
+             .HasForeignKey(x => x.UserId)
              .OnDelete(DeleteBehavior.Cascade);
         });
 

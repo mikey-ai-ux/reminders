@@ -18,4 +18,5 @@ public class AppUser : IdentityUser
 
     public ICollection<Reminder> Reminders { get; set; } = new List<Reminder>();
     public ICollection<PushSubscriptionRecord> PushSubscriptions { get; set; } = new List<PushSubscriptionRecord>();
+    public ICollection<UserContactEndpoint> ContactEndpoints { get; set; } = new List<UserContactEndpoint>();
 }

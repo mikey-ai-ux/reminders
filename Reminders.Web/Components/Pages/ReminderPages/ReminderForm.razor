@@ -342,10 +342,29 @@
         }
 
         if (!string.IsNullOrWhiteSpace(CurrentUser.Email) && CurrentUser.EmailConfirmed)
-            availableEmailTargets.Add(new TargetOption(CurrentUser.Email, CurrentUser.Email));
+            availableEmailTargets.Add(new TargetOption(CurrentUser.Email, $"Primary: {CurrentUser.Email}"));
 
         if (!string.IsNullOrWhiteSpace(CurrentUser.PhoneNumber) && CurrentUser.PhoneNumberConfirmed)
-            availablePhoneTargets.Add(new TargetOption(CurrentUser.PhoneNumber, CurrentUser.PhoneNumber));
+            availablePhoneTargets.Add(new TargetOption(CurrentUser.PhoneNumber, $"Primary: {CurrentUser.PhoneNumber}"));
+
+        var contactEndpoints = Db.UserContactEndpoints
+            .Where(x => x.UserId == CurrentUser.Id && x.IsConfirmed)
+            .OrderByDescending(x => x.CreatedAt)
+            .ToList();
+
+        foreach (var ep in contactEndpoints)
+        {
+            if (ep.Channel == NotificationChannel.Email)
+            {
+                if (!availableEmailTargets.Any(x => string.Equals(x.Value, ep.Value, StringComparison.OrdinalIgnoreCase)))
+                    availableEmailTargets.Add(new TargetOption(ep.Value, string.IsNullOrWhiteSpace(ep.Label) ? ep.Value : $"{ep.Label} ({ep.Value})"));
+            }
+            else if (ep.Channel == NotificationChannel.SMS || ep.Channel == NotificationChannel.Voice)
+            {
+                if (!availablePhoneTargets.Any(x => string.Equals(x.Value, ep.Value, StringComparison.OrdinalIgnoreCase)))
+                    availablePhoneTargets.Add(new TargetOption(ep.Value, string.IsNullOrWhiteSpace(ep.Label) ? ep.Value : $"{ep.Label} ({ep.Value})"));
+            }
+        }
     }
 
     private void LoadSelectedTargetsFromReminder()
