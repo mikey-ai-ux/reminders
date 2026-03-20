@@ -50,6 +50,10 @@ public class ReminderService : IReminderService
         var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == reminder.UserId);
         await ValidateChannelsAndTargetsAsync(reminder, user);
 
+        // If reminder is scheduled in the future, keep it active.
+        if (reminder.OccursAt > DateTime.UtcNow)
+            reminder.IsActive = true;
+
         reminder.UpdatedAt = DateTime.UtcNow;
         _db.Reminders.Update(reminder);
         await _db.SaveChangesAsync();
@@ -80,6 +84,8 @@ public class ReminderService : IReminderService
         var r = await _db.Reminders.FirstOrDefaultAsync(x => x.Id == id && x.UserId == userId);
         if (r == null) return false;
         r.IsPaused = false;
+        if (r.OccursAt > DateTime.UtcNow)
+            r.IsActive = true;
         r.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return true;

@@ -79,11 +79,17 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 window.scrollToFirstValidationError = function () {
-    const target = document.querySelector('.validation-message, .input-validation-error, .field-validation-error');
-    if (!target) return;
+    const invalidInput = document.querySelector('[aria-invalid="true"], .input-validation-error');
+    if (invalidInput) {
+        invalidInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        invalidInput.focus();
+        return;
+    }
 
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-    const input = target.closest('.form-group')?.querySelector('input,select,textarea');
-    if (input) input.focus();
+    const validationMsg = document.querySelector('.validation-message, .field-validation-error');
+    if (validationMsg) {
+        validationMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const input = validationMsg.closest('.form-group')?.querySelector('input,select,textarea');
+        if (input) input.focus();
+    }
 };

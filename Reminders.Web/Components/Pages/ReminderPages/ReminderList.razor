@@ -167,7 +167,7 @@ else
     async Task ResumeReminder(int id)
     {
         if (currentUser != null) await ReminderSvc.ResumeAsync(id, currentUser.Id);
-        reminders = reminders.Select(r => { if (r.Id == id) r.IsPaused = false; return r; }).ToList();
+        reminders = reminders.Select(r => { if (r.Id == id) { r.IsPaused = false; r.IsActive = true; } return r; }).ToList();
     }
 
     Task DeleteReminder(int id)
