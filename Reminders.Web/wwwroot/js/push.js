@@ -77,3 +77,13 @@ function urlBase64ToUint8Array(base64String) {
     const rawData = window.atob(base64);
     return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
 }
+
+window.scrollToFirstValidationError = function () {
+    const target = document.querySelector('.validation-message, .input-validation-error, .field-validation-error');
+    if (!target) return;
+
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    const input = target.closest('.form-group')?.querySelector('input,select,textarea');
+    if (input) input.focus();
+};

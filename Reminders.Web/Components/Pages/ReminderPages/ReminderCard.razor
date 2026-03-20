@@ -43,6 +43,19 @@
         </div>
     }
 
+    @if (Reminder.Targets.Any())
+    {
+        <div class="targets-box">
+            @foreach (var grp in Reminder.Targets.GroupBy(t => t.Channel))
+            {
+                <div class="target-line">
+                    <strong>@GetChannelEmoji(grp.Key) @grp.Key:</strong>
+                    <span>@string.Join(", ", grp.Select(x => string.IsNullOrWhiteSpace(x.Label) ? x.TargetValue : x.Label))</span>
+                </div>
+            }
+        </div>
+    }
+
     <div class="card-actions">
         <button class="btn btn-sm btn-ghost" @onclick="() => OnEdit.InvokeAsync(Reminder)">✏️ Edit</button>
         @if (Reminder.IsPaused)
@@ -74,6 +87,8 @@
 .meta-icon { font-size: 0.875rem; }
 .channel-badges { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .channel-badge { font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 20px; border: 1px solid var(--color-border); color: var(--color-text-muted); }
+.targets-box { border:1px dashed var(--color-border); border-radius:10px; padding:.5rem .6rem; display:flex; flex-direction:column; gap:.3rem; background:var(--color-surface-2); }
+.target-line { font-size:.78rem; color:var(--color-text-muted); display:flex; gap:.35rem; flex-wrap:wrap; }
 .card-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; border-top: 1px solid var(--color-border); padding-top: 0.75rem; }
 </style>
 

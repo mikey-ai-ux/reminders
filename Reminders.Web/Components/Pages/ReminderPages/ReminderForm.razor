@@ -7,7 +7,7 @@
 <div class="form-modal">
     <div class="form-modal-header">
         <h2>@(isEdit ? "Edit Reminder" : "New Reminder")</h2>
-        <button class="btn-icon" @onclick="OnCancel">✕</button>
+        <button class="btn-icon btn-close-modal" @onclick="OnCancel" title="Close reminder editor">Close ✕</button>
     </div>
 
     @if (!string.IsNullOrEmpty(errorMessage))
@@ -15,7 +15,7 @@
         <div class="alert alert-error">@errorMessage</div>
     }
 
-    <EditForm Model="model" OnValidSubmit="HandleSubmit">
+    <EditForm Model="model" OnValidSubmit="HandleSubmit" OnInvalidSubmit="HandleInvalidSubmit">
         <DataAnnotationsValidator />
 
         <div class="form-group">
@@ -138,7 +138,6 @@
                     </div>
                     <div class="push-actions">
                         <button type="button" class="btn btn-secondary" @onclick="RegisterCurrentDevice" disabled="@registeringDevice">@(registeringDevice ? "Registering..." : "Register current device")</button>
-                        <button type="button" class="btn btn-ghost" @onclick="UnregisterCurrentDevice">Unregister device</button>
                     </div>
                     @if (!string.IsNullOrWhiteSpace(pushDeviceStatus))
                     {
@@ -221,6 +220,7 @@
 
 <style>
 .form-modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
+.btn-close-modal { font-weight:600; border:1px solid var(--color-border); background:var(--color-surface-2); }
 .form-row { display:grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
 .type-row { display:flex; gap:.5rem; }
 .type-btn { border:1px solid var(--color-border); border-radius:8px; padding:.45rem .8rem; }
@@ -273,15 +273,7 @@
 
     private static readonly string[] IconChoices = ["🔔","💊","🏠","💼","📅","💳","🚗","📞","🧾","🎯"];
 
-    private static readonly (string Id, string DisplayName)[] CommonTimezones =
-    [
-        ("UTC", "UTC"),
-        ("America/Los_Angeles", "Pacific Time (US)"),
-        ("America/New_York", "Eastern Time (US)"),
-        ("Europe/London", "London"),
-        ("Europe/Paris", "Paris / Berlin"),
-        ("Asia/Tokyo", "Tokyo")
-    ];
+    private static readonly List<TimeZoneOption> CommonTimezones = BuildTimezoneOptions();
 
     protected override async Task OnParametersSetAsync()
     {
@@ -292,9 +284,9 @@
             {
                 Name = Reminder.Name,
                 Description = Reminder.Description,
-                OneTimeDate = Reminder.OccursAt.ToLocalTime().Date,
-                TimeOfDay = Reminder.OccursAt.ToLocalTime().ToString("HH:mm"),
-                TimeZoneId = Reminder.TimeZoneId,
+                OneTimeDate = ConvertUtcToZone(Reminder.OccursAt, Reminder.TimeZoneId).Date,
+                TimeOfDay = ConvertUtcToZone(Reminder.OccursAt, Reminder.TimeZoneId).ToString("HH:mm"),
+                TimeZoneId = string.IsNullOrWhiteSpace(Reminder.TimeZoneId) ? "UTC" : Reminder.TimeZoneId,
                 RecurringInterval = Reminder.RecurringInterval.StartsWith("Custom:") ? "Custom" : Reminder.RecurringInterval,
                 ReminderType = Reminder.RecurringInterval == "None" ? "OneTime" : "Recurring",
                 Channels = Reminder.Channels.Select(c => c.Channel).ToHashSet(),
@@ -525,7 +517,8 @@
                     throw new InvalidOperationException("Custom icon URL must be a valid absolute http/https URL.");
             }
 
-            var localDt = new DateTime(localDate.Year, localDate.Month, localDate.Day, tod.Hour, tod.Minute, 0, DateTimeKind.Local);
+            var localDt = new DateTime(localDate.Year, localDate.Month, localDate.Day, tod.Hour, tod.Minute, 0, DateTimeKind.Unspecified);
+            var utcDt = ConvertZoneToUtc(localDt, model.TimeZoneId);
             var recurring = model.ReminderType == "OneTime" ? "None" : model.RecurringInterval;
             if (model.ReminderType == "Recurring" && model.RecurringInterval == "Custom" && model.CustomDays.Any())
                 recurring = "Custom:" + string.Join(",", model.CustomDays.OrderBy(x => (int)x));
@@ -536,7 +529,7 @@
                 Reminder.Description = model.Description;
                 Reminder.Icon = model.Icon;
                 Reminder.CustomIconUrl = model.CustomIconUrl;
-                Reminder.OccursAt = localDt.ToUniversalTime();
+                Reminder.OccursAt = utcDt;
                 Reminder.TimeZoneId = model.TimeZoneId;
                 Reminder.RecurringInterval = recurring;
                 Reminder.Channels.Clear();
@@ -556,7 +549,7 @@
                     Description = model.Description,
                     Icon = model.Icon,
                     CustomIconUrl = model.CustomIconUrl,
-                    OccursAt = localDt.ToUniversalTime(),
+                    OccursAt = utcDt,
                     TimeZoneId = model.TimeZoneId,
                     RecurringInterval = recurring,
                     Channels = model.Channels.Select(ch => new ReminderChannel { Channel = ch }).ToList(),
@@ -575,6 +568,54 @@
         {
             isSaving = false;
         }
+    }
+
+    private Task HandleInvalidSubmit(EditContext _)
+        => JS.InvokeVoidAsync("scrollToFirstValidationError").AsTask();
+
+    private static DateTime ConvertUtcToZone(DateTime utc, string tzId)
+    {
+        try
+        {
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(string.IsNullOrWhiteSpace(tzId) ? "UTC" : tzId);
+            return TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), tz);
+        }
+        catch
+        {
+            return DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+        }
+    }
+
+    private static DateTime ConvertZoneToUtc(DateTime localUnspecified, string tzId)
+    {
+        try
+        {
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(string.IsNullOrWhiteSpace(tzId) ? "UTC" : tzId);
+            return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localUnspecified, DateTimeKind.Unspecified), tz);
+        }
+        catch
+        {
+            return DateTime.SpecifyKind(localUnspecified, DateTimeKind.Unspecified).ToUniversalTime();
+        }
+    }
+
+    private static List<TimeZoneOption> BuildTimezoneOptions()
+    {
+        return TimeZoneInfo.GetSystemTimeZones()
+            .Select(tz => new { tz.Id, tz.DisplayName, tz.BaseUtcOffset })
+            .OrderBy(x => x.BaseUtcOffset)
+            .ThenBy(x => x.DisplayName)
+            .Select(x => new TimeZoneOption(
+                x.Id,
+                $"(UTC{FormatOffset(x.BaseUtcOffset)}) {x.DisplayName}"))
+            .ToList();
+    }
+
+    private static string FormatOffset(TimeSpan offset)
+    {
+        var sign = offset < TimeSpan.Zero ? "-" : "+";
+        var abs = offset.Duration();
+        return $"{sign}{abs:hh\\:mm}";
     }
 
     private List<ReminderTarget> BuildTargets()
@@ -622,6 +663,7 @@
     };
 
     private sealed record TargetOption(string Value, string Label);
+    private sealed record TimeZoneOption(string Id, string DisplayName);
 
     private sealed class ReminderFormModel
     {
