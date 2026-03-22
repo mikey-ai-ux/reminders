@@ -31,18 +31,6 @@
         </div>
     </div>
 
-    @if (Reminder.Channels.Any())
-    {
-        <div class="channel-badges">
-            @foreach (var ch in Reminder.Channels)
-            {
-                <span class="channel-badge channel-@ch.Channel.ToString().ToLower()">
-                    @GetChannelEmoji(ch.Channel) @ch.Channel
-                </span>
-            }
-        </div>
-    }
-
     @if (Reminder.Targets.Any())
     {
         <div class="targets-box">

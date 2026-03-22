@@ -316,16 +316,36 @@ textarea.form-input { resize: vertical; }
 
 .brand-link {
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
-    font-size: 1.22rem;
+    font-size: 1.02rem;
     font-weight: 800;
-    color: var(--color-primary);
+    color: var(--color-text);
     text-decoration: none;
-    letter-spacing: -0.2px;
+    letter-spacing: 0;
     display: flex;
     align-items: center;
-    gap: 0.45rem;
+    gap: 0.55rem;
     white-space: nowrap;
-    text-shadow: 0 1px 0 rgba(255,255,255,0.18);
+}
+.brand-badge {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.86rem;
+    font-weight: 800;
+    color: #fff;
+    background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
+    box-shadow: 0 4px 10px rgba(67,97,238,0.35);
+}
+.brand-text {
+    background: linear-gradient(135deg, var(--color-text), var(--color-primary));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-weight: 800;
+    letter-spacing: -0.15px;
 }
 .brand-link:hover { text-decoration: none; }
 

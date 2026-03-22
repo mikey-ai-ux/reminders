@@ -80,16 +80,23 @@ function urlBase64ToUint8Array(base64String) {
 
 window.scrollToFirstValidationError = function () {
     const invalidInput = document.querySelector('[aria-invalid="true"], .input-validation-error');
-    if (invalidInput) {
-        invalidInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        invalidInput.focus();
-        return;
+    const validationMsg = document.querySelector('.validation-message, .field-validation-error');
+    const target = invalidInput || validationMsg;
+    if (!target) return;
+
+    // Prefer scrolling inside modal if present
+    const modalScrollable = target.closest('.modal-card, .form-modal');
+    if (modalScrollable) {
+        const top = target.getBoundingClientRect().top - modalScrollable.getBoundingClientRect().top + modalScrollable.scrollTop - 24;
+        modalScrollable.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    } else {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
-    const validationMsg = document.querySelector('.validation-message, .field-validation-error');
-    if (validationMsg) {
-        validationMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        const input = validationMsg.closest('.form-group')?.querySelector('input,select,textarea');
-        if (input) input.focus();
+    const input = target.matches('input,select,textarea')
+        ? target
+        : target.closest('.form-group')?.querySelector('input,select,textarea');
+    if (input) {
+        setTimeout(() => input.focus(), 120);
     }
 };
