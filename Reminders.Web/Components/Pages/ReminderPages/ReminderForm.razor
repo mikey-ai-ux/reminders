@@ -6,7 +6,15 @@
 
 <div class="form-modal">
     <div class="form-modal-header">
-        <h2>@(isEdit ? "Edit Reminder" : "New Reminder")</h2>
+        <div>
+            <h2>@(isEdit ? "Edit Reminder" : "New Reminder")</h2>
+            @if (isEdit && Reminder is not null)
+            {
+                <span class="status-chip @(Reminder.IsPaused ? "paused" : Reminder.IsActive ? "active" : "inactive")">
+                    @(Reminder.IsPaused ? "Paused" : Reminder.IsActive ? "Active" : "Inactive")
+                </span>
+            }
+        </div>
         <button class="btn-icon btn-close-modal" @onclick="OnCancel" title="Close reminder editor" aria-label="Close reminder editor">
             <span aria-hidden="true">✕</span>
         </button>
@@ -139,7 +147,14 @@
                         <div>Open this website on each target device and register it once.</div>
                     </div>
                     <div class="push-actions">
-                        <button type="button" class="btn btn-secondary" @onclick="RegisterCurrentDevice" disabled="@registeringDevice">@(registeringDevice ? "Registering..." : "Register current device")</button>
+                        @if (canRegisterPush)
+                        {
+                            <button type="button" class="btn btn-secondary" @onclick="RegisterCurrentDevice" disabled="@registeringDevice">@(registeringDevice ? "Registering..." : "Register current device")</button>
+                        }
+                        else
+                        {
+                            <span class="muted">Push device registration is not supported on this browser/device.</span>
+                        }
                     </div>
                     @if (!string.IsNullOrWhiteSpace(pushDeviceStatus))
                     {
@@ -239,6 +254,10 @@
     color: var(--color-primary);
     border-color: var(--color-primary);
 }
+.status-chip { display:inline-flex; margin-top:.3rem; padding:2px 8px; border-radius:999px; font-size:.72rem; font-weight:700; }
+.status-chip.active { background: rgba(34,197,94,.15); color:#16a34a; }
+.status-chip.paused { background: rgba(234,179,8,.18); color:#ca8a04; }
+.status-chip.inactive { background: rgba(239,68,68,.14); color:#dc2626; }
 .form-row { display:grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
 .type-row { display:flex; gap:.5rem; }
 .type-btn { border:1px solid var(--color-border); border-radius:8px; padding:.45rem .8rem; }
@@ -280,6 +299,7 @@
     private string? quotaWarning;
     private bool registeringDevice;
     private string? pushDeviceStatus;
+    private bool canRegisterPush;
 
     private readonly List<TargetOption> availablePushTargets = new();
     private readonly List<TargetOption> availableEmailTargets = new();
@@ -292,6 +312,14 @@
     private static readonly string[] IconChoices = ["🔔","💊","🏠","💼","📅","💳","🚗","📞","🧾","🎯"];
 
     private static readonly List<TimeZoneOption> CommonTimezones = BuildTimezoneOptions();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try { canRegisterPush = await JS.InvokeAsync<bool>("canRegisterPushVapid"); }
+        catch { canRegisterPush = false; }
+        StateHasChanged();
+    }
 
     protected override async Task OnParametersSetAsync()
     {

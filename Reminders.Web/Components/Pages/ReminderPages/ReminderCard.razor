@@ -52,7 +52,14 @@
         }
         else if (!Reminder.IsActive)
         {
-            <button class="btn btn-sm btn-ghost" @onclick="() => OnResume.InvokeAsync(Reminder.Id)">✅ Activate</button>
+            @if (IsExpiredOneTime(Reminder))
+            {
+                <span class="badge badge-paused">Expired one-time reminder</span>
+            }
+            else
+            {
+                <button class="btn btn-sm btn-ghost" @onclick="() => OnResume.InvokeAsync(Reminder.Id)">✅ Activate</button>
+            }
         }
         else
         {
@@ -91,6 +98,10 @@
     [Parameter] public EventCallback<int> OnPause { get; set; }
     [Parameter] public EventCallback<int> OnResume { get; set; }
     [Parameter] public EventCallback<int> OnDelete { get; set; }
+
+    private static bool IsExpiredOneTime(Reminder r)
+        => string.Equals(r.RecurringInterval, "None", StringComparison.OrdinalIgnoreCase)
+           && r.OccursAt <= DateTime.UtcNow;
 
     private string FormatOccursAt()
     {

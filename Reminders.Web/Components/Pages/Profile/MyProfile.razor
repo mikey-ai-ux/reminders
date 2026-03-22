@@ -5,6 +5,7 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject NavigationManager Nav
 @inject IJSRuntime JS
+@inject IConfiguration Config
 @inject Reminders.Data.AppDbContext Db
 @rendermode InteractiveServer
 
@@ -62,7 +63,7 @@ else
                         </span>
                         @if (!currentUser.EmailConfirmed)
                         {
-                            <button type="button" class="btn btn-sm btn-secondary" @onclick="GenerateEmailConfirmationLink">Generate confirmation link</button>
+                            <button type="button" class="btn btn-sm btn-secondary" @onclick="GenerateEmailConfirmationLink">Generate confirmation email</button>
                         }
                     </div>
                     @if (!string.IsNullOrWhiteSpace(emailConfirmationLink))
@@ -182,7 +183,7 @@ else
                                     {
                                         if (ep.Channel == Reminders.Models.Enums.NotificationChannel.Email)
                                         {
-                                            <button type="button" class="btn btn-sm btn-secondary" @onclick="() => GenerateEndpointEmailLink(ep.Id)">Generate link</button>
+                                            <button type="button" class="btn btn-sm btn-secondary" @onclick="() => GenerateEndpointEmailLink(ep.Id)">Generate confirmation email</button>
                                             @if (endpointEmailLinks.TryGetValue(ep.Id, out var link) && !string.IsNullOrWhiteSpace(link))
                                             {
                                                 <button type="button" class="btn btn-sm btn-secondary" @onclick="() => CopyText(link)">Copy link</button>
@@ -299,6 +300,9 @@ else
         var token = await UserManager.GenerateEmailConfirmationTokenAsync(currentUser);
         var encoded = Uri.EscapeDataString(token);
         emailConfirmationLink = $"{Nav.BaseUri}confirm-email?userId={Uri.EscapeDataString(currentUser.Id)}&code={encoded}";
+
+        await SendEmailAsync(currentUser.Email, "Confirm your Reminders email", $"Please confirm your email by opening this link: {emailConfirmationLink}");
+        successMessage = "Confirmation email sent.";
     }
 
     private async Task CopyEmailLink()
@@ -410,6 +414,8 @@ else
         await Db.SaveChangesAsync();
 
         endpointEmailLinks[id] = $"{Nav.BaseUri}confirm-contact-endpoint?endpointId={id}&token={ep.VerificationToken}";
+        await SendEmailAsync(ep.Value, "Confirm your additional Reminders endpoint", $"Please confirm this endpoint by opening this link: {endpointEmailLinks[id]}");
+        successMessage = "Endpoint confirmation email sent.";
     }
 
     private async Task GenerateEndpointPhoneCode(int id)
@@ -457,6 +463,27 @@ else
 
     private void SetEndpointPhoneCode(int id, string? code)
         => endpointPhoneCodes[id] = code ?? string.Empty;
+
+    private async Task SendEmailAsync(string to, string subject, string body)
+    {
+        var host = Config["Smtp:Host"];
+        var port = int.TryParse(Config["Smtp:Port"], out var p) ? p : 587;
+        var username = Config["Smtp:Username"];
+        var password = Config["Smtp:Password"];
+        var from = Config["Smtp:FromEmail"] ?? "noreply@localhost";
+
+        if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+            return;
+
+        using var client = new System.Net.Mail.SmtpClient(host, port)
+        {
+            EnableSsl = true,
+            Credentials = new System.Net.NetworkCredential(username, password)
+        };
+
+        using var mail = new System.Net.Mail.MailMessage(from, to, subject, body);
+        await client.SendMailAsync(mail);
+    }
 
     private async Task RemoveEndpoint(int id)
     {

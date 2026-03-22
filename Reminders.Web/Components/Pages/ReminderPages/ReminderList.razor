@@ -47,6 +47,13 @@
     </div>
 }
 
+@if (showForm || showDeleteConfirm)
+{
+    <style>
+        body { overflow: hidden !important; }
+    </style>
+}
+
 @if (showDeleteConfirm && pendingDeleteReminder is not null)
 {
     <div class="modal-overlay" @onclick="CancelDelete">
@@ -116,9 +123,13 @@ else
 .spinner { width: 36px; height: 36px; border: 3px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 1rem; }
 @@keyframes spin { to { transform: rotate(360deg); } }
 
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 500; padding: 1rem; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 500; padding: 1rem; overscroll-behavior: contain; }
 .modal-card { background: var(--color-surface); border-radius: 16px; padding: 2rem; width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; }
 .confirm-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 14px; width:100%; max-width: 430px; padding: 1.2rem 1.2rem 1rem; box-shadow: var(--shadow-lg); }
+@@media (max-width: 768px) {
+  .modal-overlay { padding: 0; align-items: stretch; }
+  .modal-card { border-radius: 0; max-width: none; max-height: none; height: 100dvh; padding: 1rem; }
+}
 .confirm-card h3 { margin:0 0 .45rem; }
 .confirm-card p { margin:0; color:var(--color-text-muted); }
 .confirm-actions { display:flex; justify-content:flex-end; gap:.6rem; margin-top:1rem; }
