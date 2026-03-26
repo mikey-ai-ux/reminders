@@ -44,7 +44,11 @@
     <div class="card-actions">
         <button class="btn btn-sm btn-ghost action-left" @onclick="() => OnEdit.InvokeAsync(Reminder)">🖉 Edit</button>
 
-        @if (Reminder.IsPaused)
+        @if (IsExpiredOneTime(Reminder))
+        {
+            <span class="action-center muted">—</span>
+        }
+        else if (Reminder.IsPaused)
         {
             <button class="btn btn-sm btn-ghost action-center" @onclick="() => OnResume.InvokeAsync(Reminder.Id)">▶️ Resume</button>
         }
