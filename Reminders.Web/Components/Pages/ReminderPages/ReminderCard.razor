@@ -18,13 +18,10 @@
             <span class="meta-icon">🕐</span>
             <span>@FormatOccursAt()</span>
         </div>
-        @if (Reminder.RecurringInterval != "None")
-        {
-            <div class="meta-item">
-                <span class="meta-icon">🔁</span>
-                <span>@Reminder.RecurringInterval</span>
-            </div>
-        }
+        <div class="meta-item">
+            <span class="meta-icon">🔁</span>
+            <span>@GetRecurrenceLabel()</span>
+        </div>
         <div class="meta-item">
             <span class="meta-icon">🌍</span>
             <span>@Reminder.TimeZoneId</span>
@@ -45,28 +42,30 @@
     }
 
     <div class="card-actions">
-        <button class="btn btn-sm btn-ghost" @onclick="() => OnEdit.InvokeAsync(Reminder)">✏️ Edit</button>
+        <button class="btn btn-sm btn-ghost action-left" @onclick="() => OnEdit.InvokeAsync(Reminder)">🖉 Edit</button>
+
         @if (Reminder.IsPaused)
         {
-            <button class="btn btn-sm btn-ghost" @onclick="() => OnResume.InvokeAsync(Reminder.Id)">▶️ Resume</button>
+            <button class="btn btn-sm btn-ghost action-center" @onclick="() => OnResume.InvokeAsync(Reminder.Id)">▶️ Resume</button>
         }
         else if (!Reminder.IsActive)
         {
-            @if (IsExpiredOneTime(Reminder))
-            {
-                <span class="badge badge-paused">Expired one-time reminder</span>
-            }
-            else
-            {
-                <button class="btn btn-sm btn-ghost" @onclick="() => OnResume.InvokeAsync(Reminder.Id)">✅ Activate</button>
-            }
+            <button class="btn btn-sm btn-ghost action-center" @onclick="() => OnResume.InvokeAsync(Reminder.Id)">✅ Activate</button>
         }
         else
         {
-            <button class="btn btn-sm btn-ghost" @onclick="() => OnPause.InvokeAsync(Reminder.Id)">⏸️ Pause</button>
+            <button class="btn btn-sm btn-ghost action-center" @onclick="() => OnPause.InvokeAsync(Reminder.Id)">⏸️ Pause</button>
         }
-        <button class="btn btn-sm btn-ghost" @onclick="() => OnDelete.InvokeAsync(Reminder.Id)">🗑️ Delete</button>
+
+        <button class="btn btn-sm btn-ghost action-right" @onclick="() => OnDelete.InvokeAsync(Reminder.Id)">🗑️ Delete</button>
     </div>
+
+    @if (!Reminder.IsActive && IsExpiredOneTime(Reminder))
+    {
+        <div class="chips-row">
+            <span class="badge badge-paused">Expired one-time reminder</span>
+        </div>
+    }
 </div>
 
 <style>
@@ -91,6 +90,14 @@
 .card-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; border-top: 1px solid var(--color-border); padding-top: 0.75rem; }
 </style>
 
+<style>
+.card-actions { display:grid; grid-template-columns: 1fr 1fr 1fr; align-items:center; border-top:1px solid var(--color-border); padding-top:.75rem; gap:.35rem; }
+.action-left { justify-self:start; }
+.action-center { justify-self:center; }
+.action-right { justify-self:end; }
+.chips-row { margin-top:.55rem; }
+</style>
+
 @code {
     [Parameter] public required Reminder Reminder { get; set; }
     [Parameter] public AppUser? CurrentUser { get; set; }
@@ -102,6 +109,17 @@
     private static bool IsExpiredOneTime(Reminder r)
         => string.Equals(r.RecurringInterval, "None", StringComparison.OrdinalIgnoreCase)
            && r.OccursAt <= DateTime.UtcNow;
+
+    private string GetRecurrenceLabel()
+    {
+        if (string.IsNullOrWhiteSpace(Reminder.RecurringInterval) || Reminder.RecurringInterval == "None")
+            return "One-time";
+
+        if (Reminder.RecurringInterval.StartsWith("Custom:", StringComparison.OrdinalIgnoreCase))
+            return "One-time";
+
+        return Reminder.RecurringInterval;
+    }
 
     private string FormatOccursAt()
     {

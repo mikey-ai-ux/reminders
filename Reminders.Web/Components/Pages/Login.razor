@@ -28,7 +28,10 @@
             </div>
             <div class="form-group">
                 <label for="password">Password</label>
-                <InputText id="password" @bind-Value="model.Password" type="password" class="form-input" placeholder="••••••••" />
+                <div class="password-row">
+                    <InputText id="password" @bind-Value="model.Password" type="@(showPassword ? "text" : "password")" class="form-input" placeholder="••••••••" />
+                    <button type="button" class="btn btn-ghost btn-sm" @onclick="TogglePassword">@(showPassword ? "Hide" : "Show")</button>
+                </div>
                 <ValidationMessage For="() => model.Password" />
             </div>
             <div class="form-check">
@@ -55,13 +58,21 @@
     </div>
 </div>
 
+<style>
+.password-row { display:flex; gap:.5rem; align-items:center; }
+.password-row .form-input { flex:1; }
+</style>
+
 @code {
     [SupplyParameterFromForm]
     private LoginModel model { get; set; } = new();
     private string? errorMessage;
+    private bool showPassword;
 
     [Parameter, SupplyParameterFromQuery]
     public string? ReturnUrl { get; set; }
+
+    private void TogglePassword() => showPassword = !showPassword;
 
     private async Task HandleLogin()
     {
