@@ -29,7 +29,7 @@
             <div class="form-group">
                 <label for="password">Password</label>
                 <div class="password-row">
-                    <input id="password" @bind="model.Password" type="@(showPassword ? "text" : "password")" class="form-input" placeholder="••••••••" />
+                    <input id="password" @bind="model.Password" @bind:event="oninput" type="@(showPassword ? "text" : "password")" class="form-input" placeholder="••••••••" />
                     <button type="button" class="btn btn-ghost btn-sm" @onclick="TogglePassword">@(showPassword ? "Hide" : "Show")</button>
                 </div>
                 <ValidationMessage For="() => model.Password" />

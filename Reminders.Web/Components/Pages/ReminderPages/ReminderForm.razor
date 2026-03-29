@@ -2,6 +2,7 @@
 @inject ISubscriptionService SubSvc
 @inject IConfiguration Config
 @inject IJSRuntime JS
+@inject UserManager<AppUser> UserManager
 @inject Reminders.Data.AppDbContext Db
 
 <div class="form-modal">
@@ -194,6 +195,10 @@
                             @if (!availableEmailTargets.Any())
                             {
                                 <div class="muted">No confirmed email available.</div>
+                                @if (!string.IsNullOrWhiteSpace(CurrentUser?.Email))
+                                {
+                                    <button type="button" class="btn btn-sm btn-secondary" @onclick="SendPrimaryEmailConfirmationFromModal">Send confirmation email</button>
+                                }
                             }
                             else
                             {
@@ -517,9 +522,18 @@
             }
 
             var ok = await JS.InvokeAsync<bool>("registerPushSubscription", vapidPublic);
-            pushDeviceStatus = ok
-                ? "Current device registered for push successfully."
-                : "Could not register this device. Please allow notifications and try again.";
+            if (ok)
+            {
+                await LoadAvailableTargetsAsync();
+                // auto-select latest registered device for convenience
+                var latest = availablePushTargets.FirstOrDefault();
+                if (latest is not null) selectedPushTargets.Add(latest.Value);
+                pushDeviceStatus = "Current device registered for push successfully.";
+            }
+            else
+            {
+                pushDeviceStatus = "Could not register this device. Please allow notifications and try again.";
+            }
         }
         catch (Exception ex)
         {
@@ -568,6 +582,35 @@
             var recurring = model.ReminderType == "OneTime" ? "None" : model.RecurringInterval;
             if (model.ReminderType == "Recurring" && model.RecurringInterval == "Custom" && model.CustomDays.Any())
                 recurring = "Custom:" + string.Join(",", model.CustomDays.OrderBy(x => (int)x));
+
+            // Prevent immediate fire for recurring reminders when selected time already passed today.
+            if (model.ReminderType == "Recurring" && utcDt <= DateTime.UtcNow)
+            {
+                var adjustedLocal = localDt;
+                if (recurring.StartsWith("Custom:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var selectedDays = model.CustomDays.OrderBy(d => (int)d).ToList();
+                    if (selectedDays.Count > 0)
+                    {
+                        var probe = adjustedLocal;
+                        for (int i = 0; i < 8; i++)
+                        {
+                            probe = probe.AddDays(1);
+                            if (selectedDays.Contains(probe.DayOfWeek)) { adjustedLocal = probe; break; }
+                        }
+                    }
+                    else
+                    {
+                        adjustedLocal = adjustedLocal.AddDays(1);
+                    }
+                }
+                else if (recurring == "Weekly") adjustedLocal = adjustedLocal.AddDays(7);
+                else if (recurring == "Monthly") adjustedLocal = adjustedLocal.AddMonths(1);
+                else if (recurring == "Annually") adjustedLocal = adjustedLocal.AddYears(1);
+                else adjustedLocal = adjustedLocal.AddDays(1); // Daily/default
+
+                utcDt = ConvertZoneToUtc(adjustedLocal, model.TimeZoneId);
+            }
 
             if (isEdit && Reminder is not null)
             {
@@ -662,6 +705,46 @@
         var sign = offset < TimeSpan.Zero ? "-" : "+";
         var abs = offset.Duration();
         return $"{sign}{abs:hh\\:mm}";
+    }
+
+    private async Task SendPrimaryEmailConfirmationFromModal()
+    {
+        if (CurrentUser is null || string.IsNullOrWhiteSpace(CurrentUser.Email)) return;
+
+        var token = await UserManager.GenerateEmailConfirmationTokenAsync(CurrentUser);
+        var encoded = Uri.EscapeDataString(token);
+        var link = $"{NavigationBase()}confirm-email?userId={Uri.EscapeDataString(CurrentUser.Id)}&code={encoded}";
+
+        await SendEmailAsync(CurrentUser.Email, "Confirm your Reminders email", $"Please confirm your email by opening this link: {link}");
+        pushDeviceStatus = "Confirmation email sent.";
+    }
+
+    private string NavigationBase()
+    {
+        var baseUri = Config["AppBaseUrl"];
+        if (!string.IsNullOrWhiteSpace(baseUri)) return baseUri.TrimEnd('/') + "/";
+        return "https://localhost:5001/";
+    }
+
+    private async Task SendEmailAsync(string to, string subject, string body)
+    {
+        var host = Config["Smtp:Host"];
+        var port = int.TryParse(Config["Smtp:Port"], out var p) ? p : 587;
+        var username = Config["Smtp:Username"];
+        var password = Config["Smtp:Password"];
+        var from = Config["Smtp:FromEmail"] ?? "noreply@localhost";
+
+        if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+            return;
+
+        using var client = new System.Net.Mail.SmtpClient(host, port)
+        {
+            EnableSsl = true,
+            Credentials = new System.Net.NetworkCredential(username, password)
+        };
+
+        using var mail = new System.Net.Mail.MailMessage(from, to, subject, body);
+        await client.SendMailAsync(mail);
     }
 
     private List<ReminderTarget> BuildTargets()
