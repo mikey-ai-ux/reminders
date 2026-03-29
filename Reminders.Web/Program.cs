@@ -96,6 +96,25 @@ app.UseAntiforgery();
 // ── API Endpoints ─────────────────────────────────────────────────────────────
 app.MapControllers();
 
+app.MapPost("/login-local", async (HttpContext http, SignInManager<AppUser> signInManager) =>
+{
+    var form = await http.Request.ReadFormAsync();
+    var email = form["email"].ToString();
+    var password = form["password"].ToString();
+    var remember = string.Equals(form["rememberMe"], "true", StringComparison.OrdinalIgnoreCase);
+    var returnUrl = form["returnUrl"].ToString();
+    if (string.IsNullOrWhiteSpace(returnUrl)) returnUrl = "/reminders";
+
+    if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+        return Results.Redirect("/login?error=Email%20and%20password%20are%20required.");
+
+    var result = await signInManager.PasswordSignInAsync(email.Trim(), password, remember, lockoutOnFailure: false);
+    if (!result.Succeeded)
+        return Results.Redirect("/login?error=Invalid%20email%20or%20password.");
+
+    return Results.Redirect(returnUrl);
+});
+
 app.MapGet("/challenge/{provider}", (string provider, string? returnUrl) =>
 {
     var redirect = $"/externallogin-callback?returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}";
