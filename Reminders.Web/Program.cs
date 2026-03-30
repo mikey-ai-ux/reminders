@@ -69,6 +69,7 @@ builder.Services.AddHostedService<ReminderScheduler>();
 
 // ── MVC Controllers ───────────────────────────────────────────────────────────
 builder.Services.AddControllers();
+builder.Services.AddControllersWithViews();
 
 // ── Blazor ────────────────────────────────────────────────────────────────────
 builder.Services.AddRazorComponents()
