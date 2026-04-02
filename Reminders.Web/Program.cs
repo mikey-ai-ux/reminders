@@ -96,6 +96,10 @@ app.UseAntiforgery();
 
 // ── API Endpoints ─────────────────────────────────────────────────────────────
 app.MapControllers();
+app.MapControllerRoute(
+    name: "default",
+    pattern: "{controller=Account}/{action=Login}/{id?}");
+app.MapGet("/login", () => Results.Redirect("/account/login"));
 
 app.MapPost("/login-local", async (HttpContext http, SignInManager<AppUser> signInManager) =>
 {

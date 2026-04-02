@@ -26,6 +26,10 @@
     {
         <div class="alert alert-error">@errorMessage</div>
     }
+    @if (IsOneTimePastSelection())
+    {
+        <div class="alert alert-info">Selected date/time is in the past. If saved, this reminder will be inactive.</div>
+    }
 
     <EditForm Model="model" OnValidSubmit="HandleSubmit" OnInvalidSubmit="HandleInvalidSubmit">
         <DataAnnotationsValidator />
@@ -508,6 +512,15 @@
         model.TimeOfDay = e.Value?.ToString() ?? model.TimeOfDay;
     }
 
+    bool IsOneTimePastSelection()
+    {
+        if (model.ReminderType != "OneTime") return false;
+        if (!TimeOnly.TryParse(model.TimeOfDay, out var tod)) return false;
+        var localDt = new DateTime(model.OneTimeDate.Year, model.OneTimeDate.Month, model.OneTimeDate.Day, tod.Hour, tod.Minute, 0, DateTimeKind.Unspecified);
+        var utc = ConvertZoneToUtc(localDt, model.TimeZoneId);
+        return utc <= DateTime.UtcNow;
+    }
+
     private async Task RegisterCurrentDevice()
     {
         try
@@ -613,6 +626,8 @@
                 utcDt = ConvertZoneToUtc(adjustedLocal, model.TimeZoneId);
             }
 
+            var oneTimePast = model.ReminderType == "OneTime" && utcDt <= DateTime.UtcNow;
+
             if (isEdit && Reminder is not null)
             {
                 Reminder.Name = model.Name;
@@ -628,6 +643,17 @@
                 Reminder.Targets.Clear();
                 foreach (var t in BuildTargets()) Reminder.Targets.Add(t);
 
+                if (utcDt > DateTime.UtcNow)
+                {
+                    Reminder.IsActive = true;
+                    Reminder.IsPaused = false;
+                }
+                else if (oneTimePast)
+                {
+                    Reminder.IsActive = false;
+                    Reminder.IsPaused = false;
+                }
+
                 await ReminderSvc.UpdateAsync(Reminder);
             }
             else
@@ -642,6 +668,8 @@
                     OccursAt = utcDt,
                     TimeZoneId = model.TimeZoneId,
                     RecurringInterval = recurring,
+                    IsActive = !oneTimePast,
+                    IsPaused = false,
                     Channels = model.Channels.Select(ch => new ReminderChannel { Channel = ch }).ToList(),
                     Targets = BuildTargets()
                 };

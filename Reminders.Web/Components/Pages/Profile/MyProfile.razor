@@ -157,7 +157,7 @@ else
                 <div class="confirm-help">
                     <select class="form-input" @bind="newEndpointChannel">
                         <option value="Email">Email</option>
-                        <option value="SMS">Phone (SMS/Voice)</option>
+                        <option value="SMS">Phone</option>
                     </select>
                     <InputText class="form-input" @bind-Value="newEndpointValue" placeholder="email@example.com or +123..." />
                     <InputText class="form-input" @bind-Value="newEndpointLabel" placeholder="Label (Work, Personal, etc.)" />
@@ -367,10 +367,13 @@ else
         }
         else
         {
+            if (value.StartsWith("00", StringComparison.Ordinal))
+                value = "+" + value[2..];
+
             // Basic E.164-like validation
-            if (!System.Text.RegularExpressions.Regex.IsMatch(value, "^\\+?[1-9]\\d{7,14}$"))
+            if (!System.Text.RegularExpressions.Regex.IsMatch(value, "^\\+[1-9]\\d{7,14}$"))
             {
-                successMessage = "Invalid phone format. Use international format like +123456789.";
+                successMessage = "Invalid phone format. Use international format like +123456789 (or 00...).";
                 return;
             }
         }
