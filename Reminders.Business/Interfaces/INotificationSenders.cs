@@ -19,5 +19,5 @@ public interface IVoiceNotificationSender
 
 public interface IPushNotificationSender
 {
-    Task SendAsync(AppUser user, Reminder reminder);
+    Task SendAsync(AppUser user, Reminder reminder, IEnumerable<string>? endpointFilter = null);
 }

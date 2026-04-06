@@ -77,3 +77,38 @@ function urlBase64ToUint8Array(base64String) {
     const rawData = window.atob(base64);
     return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
 }
+
+window.scrollToFirstValidationError = function () {
+    const run = () => {
+        const invalidInput = document.querySelector('[aria-invalid="true"], .input-validation-error');
+        const validationMsg = document.querySelector('.validation-message, .field-validation-error');
+        const target = invalidInput || validationMsg;
+        if (!target) return;
+
+        const modalScrollable = target.closest('.modal-card, .form-modal');
+        if (modalScrollable) {
+            const top = target.getBoundingClientRect().top - modalScrollable.getBoundingClientRect().top + modalScrollable.scrollTop - 24;
+            modalScrollable.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+        } else {
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        const input = target.matches('input,select,textarea')
+            ? target
+            : target.closest('.form-group')?.querySelector('input,select,textarea');
+        if (input) setTimeout(() => input.focus(), 120);
+    };
+
+    // Run twice to catch first validation render
+    requestAnimationFrame(run);
+    setTimeout(run, 90);
+};
+
+window.canRegisterPushVapid = function () {
+    const ua = navigator.userAgent || '';
+    const isIOSSafari = /iP(ad|hone|od)/.test(ua) && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
+    if (isIOSSafari) return false;
+
+    // Do not hard-block on isSecureContext here; let actual registration report precise failure.
+    return !!('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window);
+};

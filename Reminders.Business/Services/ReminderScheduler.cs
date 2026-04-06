@@ -60,6 +60,7 @@ public class ReminderScheduler : BackgroundService
 
         var dueReminders = await db.Reminders
             .Include(r => r.Channels)
+            .Include(r => r.Targets)
             .Include(r => r.User)
             .Where(r => r.IsActive
                 && !r.IsPaused

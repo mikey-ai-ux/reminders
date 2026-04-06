@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Reminders.Data;
 
@@ -11,9 +12,11 @@ using Reminders.Data;
 namespace Reminders.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260307092543_AddMultiTierPlansAndChannelQuotas")]
+    partial class AddMultiTierPlansAndChannelQuotas
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -269,13 +272,6 @@ namespace Reminders.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("DeviceType")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(80)
-                        .HasColumnType("nvarchar(80)")
-                        .HasDefaultValue("Unknown");
-
                     b.Property<string>("Endpoint")
                         .IsRequired()
                         .HasMaxLength(2048)
@@ -400,10 +396,6 @@ namespace Reminders.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("DeviceType")
-                        .HasMaxLength(80)
-                        .HasColumnType("nvarchar(80)");
-
                     b.Property<string>("MessageSnapshot")
                         .IsRequired()
                         .HasMaxLength(2000)
@@ -438,41 +430,6 @@ namespace Reminders.Data.Migrations
                     b.HasIndex("ReminderId");
 
                     b.ToTable("ReminderNotifications");
-                });
-
-            modelBuilder.Entity("Reminders.Models.ReminderTarget", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("Channel")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Label")
-                        .HasMaxLength(120)
-                        .HasColumnType("nvarchar(120)");
-
-                    b.Property<int>("ReminderId")
-                        .HasColumnType("int");
-
-                    b.Property<string>("TargetType")
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("nvarchar(40)");
-
-                    b.Property<string>("TargetValue")
-                        .IsRequired()
-                        .HasMaxLength(2048)
-                        .HasColumnType("nvarchar(2048)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ReminderId");
-
-                    b.ToTable("ReminderTargets");
                 });
 
             modelBuilder.Entity("Reminders.Models.SubscriptionPlan", b =>
@@ -562,54 +519,6 @@ namespace Reminders.Data.Migrations
                             SmsMonthlyLimit = 10000,
                             VoiceMonthlyLimit = 1000
                         });
-                });
-
-            modelBuilder.Entity("Reminders.Models.UserContactEndpoint", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("Channel")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<bool>("IsConfirmed")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("Label")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("Value")
-                        .IsRequired()
-                        .HasMaxLength(320)
-                        .HasColumnType("nvarchar(320)");
-
-                    b.Property<string>("VerificationCode")
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<DateTime?>("VerificationExpiresAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("VerificationToken")
-                        .HasMaxLength(120)
-                        .HasColumnType("nvarchar(120)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("UserContactEndpoints");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
@@ -717,32 +626,8 @@ namespace Reminders.Data.Migrations
                     b.Navigation("Reminder");
                 });
 
-            modelBuilder.Entity("Reminders.Models.ReminderTarget", b =>
-                {
-                    b.HasOne("Reminders.Models.Reminder", "Reminder")
-                        .WithMany("Targets")
-                        .HasForeignKey("ReminderId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Reminder");
-                });
-
-            modelBuilder.Entity("Reminders.Models.UserContactEndpoint", b =>
-                {
-                    b.HasOne("Reminders.Models.AppUser", "User")
-                        .WithMany("ContactEndpoints")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
             modelBuilder.Entity("Reminders.Models.AppUser", b =>
                 {
-                    b.Navigation("ContactEndpoints");
-
                     b.Navigation("PushSubscriptions");
 
                     b.Navigation("Reminders");
@@ -753,8 +638,6 @@ namespace Reminders.Data.Migrations
                     b.Navigation("Channels");
 
                     b.Navigation("Notifications");
-
-                    b.Navigation("Targets");
                 });
 #pragma warning restore 612, 618
         }

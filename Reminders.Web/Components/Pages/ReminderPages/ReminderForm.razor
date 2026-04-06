@@ -1,100 +1,299 @@
+@using Microsoft.AspNetCore.Identity
 @inject IReminderService ReminderSvc
 @inject ISubscriptionService SubSvc
+@inject IConfiguration Config
+@inject IJSRuntime JS
+@inject UserManager<AppUser> UserManager
+@inject Reminders.Data.AppDbContext Db
 
 <div class="form-modal">
     <div class="form-modal-header">
-        <h2>@(isEdit ? "Edit Reminder" : "New Reminder")</h2>
-        <button class="btn-icon" @onclick="OnCancel">✕</button>
+        <div>
+            <h2>@(isEdit ? "Edit Reminder" : "New Reminder")</h2>
+            @if (isEdit && Reminder is not null)
+            {
+                <span class="status-chip @(Reminder.IsPaused ? "paused" : Reminder.IsActive ? "active" : "inactive")">
+                    @(Reminder.IsPaused ? "Paused" : Reminder.IsActive ? "Active" : "Inactive")
+                </span>
+            }
+        </div>
+        <button class="btn-icon btn-close-modal" @onclick="OnCancel" title="Close reminder editor" aria-label="Close reminder editor">
+            <span aria-hidden="true">✕</span>
+        </button>
     </div>
 
     @if (!string.IsNullOrEmpty(errorMessage))
     {
         <div class="alert alert-error">@errorMessage</div>
     }
+    @if (IsOneTimePastSelection())
+    {
+        <div class="alert alert-info">Selected date/time is in the past. If saved, this reminder will be inactive.</div>
+    }
 
-    <EditForm Model="model" OnValidSubmit="HandleSubmit">
+    <EditForm Model="model" OnValidSubmit="HandleSubmit" OnInvalidSubmit="HandleInvalidSubmit">
         <DataAnnotationsValidator />
 
         <div class="form-group">
+            <label>Reminder type</label>
+            <div class="type-row">
+                <button type="button" class="type-btn @(model.ReminderType == "OneTime" ? "active" : "")" @onclick='() => model.ReminderType = "OneTime"'>One-time</button>
+                <button type="button" class="type-btn @(model.ReminderType == "Recurring" ? "active" : "")" @onclick='() => model.ReminderType = "Recurring"'>Recurring</button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Icon</label>
+            <div class="icon-picker">
+                @foreach (var icon in IconChoices)
+                {
+                    <button type="button" class="icon-btn @(model.Icon == icon ? "active" : "")" @onclick='() => model.Icon = icon'>@icon</button>
+                }
+            </div>
+            <InputText @bind-Value="model.CustomIconUrl" class="form-input" placeholder="Optional custom icon URL (https://...)" />
+            <ValidationMessage For="() => model.CustomIconUrl" />
+        </div>
+
+        <div class="form-group">
             <label>Name *</label>
-            <InputText @bind-Value="model.Name" class="form-input" placeholder="e.g. Team standup" />
+            <InputText @bind-Value="model.Name" class="form-input" placeholder="e.g. Pay rent" />
             <ValidationMessage For="() => model.Name" />
         </div>
 
         <div class="form-group">
             <label>Description</label>
-            <InputTextArea @bind-Value="model.Description" class="form-input form-textarea" placeholder="Optional description..." rows="2" />
+            <InputTextArea @bind-Value="model.Description" class="form-input form-textarea" rows="2" />
         </div>
 
-        <div class="form-row">
-            <div class="form-group">
-                <label>Date &amp; Time *</label>
-                <InputDate Type="InputDateType.DateTimeLocal" @bind-Value="model.OccursAt" class="form-input" />
-                <ValidationMessage For="() => model.OccursAt" />
+        @if (model.ReminderType == "OneTime")
+        {
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Date *</label>
+                    <InputDate @bind-Value="model.OneTimeDate" class="form-input" />
+                </div>
+                <div class="form-group">
+                    <label>Time *</label>
+                    <input type="time" class="form-input" value="@model.TimeOfDay" @onchange="OnTimeChanged" />
+                </div>
             </div>
-            <div class="form-group">
-                <label>Timezone</label>
-                <InputSelect @bind-Value="model.TimeZoneId" class="form-input">
-                    @foreach (var tz in CommonTimezones)
-                    {
-                        <option value="@tz.Id">@tz.DisplayName</option>
-                    }
-                </InputSelect>
+        }
+        else
+        {
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Time *</label>
+                    <input type="time" class="form-input" value="@model.TimeOfDay" @onchange="OnTimeChanged" />
+                </div>
+                <div class="form-group">
+                    <label>Recurring interval</label>
+                    <InputSelect @bind-Value="model.RecurringInterval" class="form-input">
+                        <option value="Daily">Daily</option>
+                        <option value="Weekly">Weekly</option>
+                        <option value="Monthly">Monthly</option>
+                        <option value="Annually">Annually</option>
+                        <option value="Custom">Custom days</option>
+                    </InputSelect>
+                </div>
             </div>
-        </div>
+
+            @if (model.RecurringInterval == "Custom")
+            {
+                <div class="form-group">
+                    <label>Repeat on</label>
+                    <div class="day-picker">
+                        @foreach (var day in Enum.GetValues<DayOfWeek>())
+                        {
+                            var isOn = model.CustomDays.Contains(day);
+                            <button type="button" class="day-btn @(isOn ? "active" : "")" @onclick="() => ToggleDay(day)">@day.ToString()[..2]</button>
+                        }
+                    </div>
+                </div>
+            }
+        }
 
         <div class="form-group">
-            <label>Recurring</label>
-            <InputSelect @bind-Value="model.RecurringInterval" class="form-input">
-                <option value="None">None (one-time)</option>
-                <option value="Daily">Daily</option>
-                <option value="Weekly">Weekly</option>
-                <option value="Monthly">Monthly</option>
+            <label>Timezone</label>
+            <InputSelect @bind-Value="model.TimeZoneId" class="form-input">
+                @foreach (var tz in CommonTimezones)
+                {
+                    <option value="@tz.Id">@tz.DisplayName</option>
+                }
             </InputSelect>
         </div>
 
         <div class="form-group">
-            <label>Notification Channels</label>
+            <label>Notification channels</label>
+            @if (!string.IsNullOrWhiteSpace(quotaWarning))
+            {
+                <div class="alert alert-info">@quotaWarning</div>
+            }
             <div class="channel-checkboxes">
                 @foreach (var ch in Enum.GetValues<NotificationChannel>())
                 {
                     var allowed = CurrentUser != null && SubSvc.IsChannelAllowed(CurrentUser, ch);
-                    <label class="channel-option @(allowed ? "" : "disabled")" title="@(allowed ? "" : "Upgrade to Pro to unlock")">
-                        <input type="checkbox"
-                               checked="@model.Channels.Contains(ch)"
-                               disabled="@(!allowed)"
-                               @onchange="(e) => ToggleChannel(ch, (bool)(e.Value ?? false))" />
-                        <span>@GetChannelEmoji(ch) @ch</span>
+                    var isChecked = model.Channels.Contains(ch);
+                    <label class="channel-pill @(isChecked ? "checked" : "") @(allowed ? "" : "locked")">
+                        <input type="checkbox" checked="@isChecked" disabled="@(!allowed)" @onchange="(e) => ToggleChannel(ch, (bool)(e.Value ?? false))" />
+                        <span class="pill-icon">@GetChannelEmoji(ch)</span>
+                        <span class="pill-label">@ch</span>
                         @if (!allowed)
                         {
-                            <span class="pro-lock">🔒 Pro</span>
+                            <span class="pro-badge">Pro</span>
                         }
                     </label>
                 }
             </div>
+
+            @if (model.Channels.Contains(NotificationChannel.Push))
+            {
+                <div class="push-register-box">
+                    <div class="push-text">
+                        <strong>Push notifications require device registration.</strong>
+                        <div>Open this website on each target device and register it once.</div>
+                    </div>
+                    <div class="push-actions">
+                        @if (canRegisterPush)
+                        {
+                            <button type="button" class="btn btn-secondary" @onclick="RegisterCurrentDevice" disabled="@registeringDevice">@(registeringDevice ? "Registering..." : "Register current device")</button>
+                        }
+                        else
+                        {
+                            <span class="muted">Push device registration is not supported on this browser/device.</span>
+                        }
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(pushDeviceStatus))
+                    {
+                        <div class="alert alert-info">@pushDeviceStatus</div>
+                    }
+                </div>
+            }
+
+            @if (model.Channels.Any())
+            {
+                <div class="target-picker">
+                    <label>Delivery targets per channel</label>
+
+                    @if (model.Channels.Contains(NotificationChannel.Push))
+                    {
+                        <div class="target-group">
+                            <div class="target-title">Push devices</div>
+                            @if (!availablePushTargets.Any())
+                            {
+                                <div class="muted">No push devices registered.</div>
+                            }
+                            else
+                            {
+                                @foreach (var t in availablePushTargets)
+                                {
+                                    var checkedVal = selectedPushTargets.Contains(t.Value);
+                                    <label class="target-option"><input type="checkbox" checked="@checkedVal" @onchange="(e) => ToggleTarget(NotificationChannel.Push, t.Value, (bool)(e.Value ?? false))" /> @t.Label</label>
+                                }
+                            }
+                        </div>
+                    }
+
+                    @if (model.Channels.Contains(NotificationChannel.Email))
+                    {
+                        <div class="target-group">
+                            <div class="target-title">Email targets</div>
+                            @if (!availableEmailTargets.Any())
+                            {
+                                <div class="muted">No confirmed email available.</div>
+                                @if (!string.IsNullOrWhiteSpace(CurrentUser?.Email))
+                                {
+                                    <button type="button" class="btn btn-sm btn-secondary" @onclick="SendPrimaryEmailConfirmationFromModal">Send confirmation email</button>
+                                }
+                            }
+                            else
+                            {
+                                @foreach (var t in availableEmailTargets)
+                                {
+                                    var checkedVal = selectedEmailTargets.Contains(t.Value);
+                                    <label class="target-option"><input type="checkbox" checked="@checkedVal" @onchange="(e) => ToggleTarget(NotificationChannel.Email, t.Value, (bool)(e.Value ?? false))" /> @t.Label</label>
+                                }
+                            }
+                        </div>
+                    }
+
+                    @if (model.Channels.Contains(NotificationChannel.SMS) || model.Channels.Contains(NotificationChannel.Voice))
+                    {
+                        <div class="target-group">
+                            <div class="target-title">Phone targets (SMS/Voice)</div>
+                            @if (!availablePhoneTargets.Any())
+                            {
+                                <div class="muted">No confirmed phone available.</div>
+                            }
+                            else
+                            {
+                                @foreach (var t in availablePhoneTargets)
+                                {
+                                    var checkedVal = selectedPhoneTargets.Contains(t.Value);
+                                    <label class="target-option"><input type="checkbox" checked="@checkedVal" @onchange="(e) => TogglePhoneTarget(t.Value, (bool)(e.Value ?? false))" /> @t.Label</label>
+                                }
+                            }
+                        </div>
+                    }
+                </div>
+            }
         </div>
 
         <div class="form-actions">
             <button type="button" class="btn btn-secondary" @onclick="OnCancel">Cancel</button>
-            <button type="submit" class="btn btn-primary" disabled="@isSaving">
-                @(isSaving ? "Saving..." : isEdit ? "Save Changes" : "Create Reminder")
-            </button>
+            <button type="submit" class="btn btn-primary" disabled="@isSaving">@(isSaving ? "Saving..." : isEdit ? "Save Changes" : "Create Reminder")</button>
         </div>
     </EditForm>
 </div>
 
 <style>
-.form-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
-.form-modal-header h2 { font-size: 1.25rem; font-weight: 700; margin: 0; color: var(--color-text); }
-.btn-icon { background: none; border: none; font-size: 1.1rem; cursor: pointer; color: var(--color-text-muted); padding: 0.25rem; }
-.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-.form-textarea { resize: vertical; min-height: 60px; }
-.channel-checkboxes { display: flex; flex-direction: column; gap: 0.5rem; }
-.channel-option { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; color: var(--color-text); cursor: pointer; padding: 0.5rem; border-radius: 8px; }
-.channel-option:hover:not(.disabled) { background: var(--color-primary-alpha); }
-.channel-option.disabled { opacity: 0.5; cursor: not-allowed; }
-.pro-lock { font-size: 0.7rem; background: var(--color-primary-alpha); color: var(--color-primary); padding: 1px 6px; border-radius: 10px; margin-left: auto; }
-.form-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+.form-modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
+.btn-close-modal {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-2);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    color: var(--color-text-muted);
+}
+.btn-close-modal:hover {
+    background: var(--color-primary-alpha);
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+}
+.status-chip { display:inline-flex; margin-top:.3rem; padding:2px 8px; border-radius:999px; font-size:.72rem; font-weight:700; }
+.status-chip.active { background: rgba(34,197,94,.15); color:#16a34a; }
+.status-chip.paused { background: rgba(234,179,8,.18); color:#ca8a04; }
+.status-chip.inactive { background: rgba(239,68,68,.14); color:#dc2626; }
+.form-row { display:grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+.type-row { display:flex; gap:.5rem; }
+.type-btn { border:1px solid var(--color-border); border-radius:8px; padding:.45rem .8rem; }
+.type-btn.active { background:var(--color-primary-alpha); color:var(--color-primary); border-color:var(--color-primary); }
+.icon-picker { display:flex; flex-wrap:wrap; gap:.4rem; margin-bottom:.5rem; }
+.icon-btn { width:36px; height:36px; border:1px solid var(--color-border); border-radius:8px; }
+.icon-btn.active { border-color:var(--color-primary); background:var(--color-primary-alpha); }
+.day-picker { display:flex; gap:.4rem; flex-wrap:wrap; }
+.day-btn { width:40px; height:40px; border-radius:50%; border:1px solid var(--color-border); }
+.day-btn.active { background:var(--color-primary); color:#fff; border-color:var(--color-primary); }
+.channel-checkboxes { display:grid; grid-template-columns:1fr 1fr; gap:.5rem; }
+.channel-pill { display:flex; align-items:center; gap:.5rem; padding:.55rem .8rem; border:1px solid var(--color-border); border-radius:10px; }
+.channel-pill.checked { border-color:var(--color-primary); background:var(--color-primary-alpha); }
+.channel-pill.locked { opacity:.6; }
+.channel-pill input { display:none; }
+.pill-label { flex:1; }
+.pro-badge { font-size:.65rem; background:var(--color-primary); color:#fff; padding:2px 6px; border-radius:12px; }
+.push-register-box { margin-top:.75rem; border:1px dashed var(--color-border); border-radius:10px; padding:.75rem; background:var(--color-surface-2); }
+.push-text { font-size:.82rem; color:var(--color-text-muted); margin-bottom:.5rem; }
+.push-actions { display:flex; gap:.5rem; flex-wrap:wrap; }
+.target-picker { margin-top:.75rem; border:1px solid var(--color-border); border-radius:10px; padding:.75rem; }
+.target-group { margin-top:.6rem; }
+.target-title { font-size:.82rem; font-weight:600; color:var(--color-text); margin-bottom:.25rem; }
+.target-option { display:flex; align-items:center; gap:.45rem; font-size:.84rem; color:var(--color-text-muted); margin:.22rem 0; }
+.form-actions { display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem; }
+@@media (max-width: 640px) { .form-row,.channel-checkboxes { grid-template-columns:1fr; } }
 </style>
 
 @code {
@@ -104,77 +303,357 @@
     [Parameter] public EventCallback OnCancel { get; set; }
 
     private ReminderFormModel model = new();
-    private bool isEdit = false;
-    private bool isSaving = false;
+    private bool isEdit;
+    private bool isSaving;
     private string? errorMessage;
+    private string? quotaWarning;
+    private bool registeringDevice;
+    private string? pushDeviceStatus;
+    private bool canRegisterPush;
 
-    private static readonly (string Id, string DisplayName)[] CommonTimezones =
-    [
-        ("UTC", "UTC"),
-        ("America/Los_Angeles", "Pacific Time (US)"),
-        ("America/Denver", "Mountain Time (US)"),
-        ("America/Chicago", "Central Time (US)"),
-        ("America/New_York", "Eastern Time (US)"),
-        ("Europe/London", "London"),
-        ("Europe/Paris", "Paris / Berlin"),
-        ("Asia/Tokyo", "Tokyo"),
-        ("Asia/Shanghai", "Shanghai"),
-        ("Australia/Sydney", "Sydney"),
-    ];
+    private readonly List<TargetOption> availablePushTargets = new();
+    private readonly List<TargetOption> availableEmailTargets = new();
+    private readonly List<TargetOption> availablePhoneTargets = new();
 
-    protected override void OnParametersSet()
+    private HashSet<string> selectedPushTargets = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> selectedEmailTargets = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> selectedPhoneTargets = new(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly string[] IconChoices = ["🔔","💊","🏠","💼","📅","💳","🚗","📞","🧾","🎯"];
+
+    private static readonly List<TimeZoneOption> CommonTimezones = BuildTimezoneOptions();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (Reminder != null)
+        if (!firstRender) return;
+        try { canRegisterPush = await JS.InvokeAsync<bool>("canRegisterPushVapid"); }
+        catch { canRegisterPush = false; }
+        StateHasChanged();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Reminder is not null)
         {
             isEdit = true;
             model = new ReminderFormModel
             {
                 Name = Reminder.Name,
                 Description = Reminder.Description,
-                OccursAt = Reminder.OccursAt,
-                TimeZoneId = Reminder.TimeZoneId,
-                RecurringInterval = Reminder.RecurringInterval,
-                Channels = Reminder.Channels.Select(c => c.Channel).ToHashSet()
+                OneTimeDate = ConvertUtcToZone(Reminder.OccursAt, Reminder.TimeZoneId).Date,
+                TimeOfDay = ConvertUtcToZone(Reminder.OccursAt, Reminder.TimeZoneId).ToString("HH:mm"),
+                TimeZoneId = string.IsNullOrWhiteSpace(Reminder.TimeZoneId) ? "UTC" : Reminder.TimeZoneId,
+                RecurringInterval = Reminder.RecurringInterval.StartsWith("Custom:") ? "Custom" : Reminder.RecurringInterval,
+                ReminderType = Reminder.RecurringInterval == "None" ? "OneTime" : "Recurring",
+                Channels = Reminder.Channels.Select(c => c.Channel).ToHashSet(),
+                Icon = string.IsNullOrWhiteSpace(Reminder.Icon) ? "🔔" : Reminder.Icon,
+                CustomIconUrl = Reminder.CustomIconUrl
             };
+
+            if (Reminder.RecurringInterval.StartsWith("Custom:"))
+            {
+                var days = Reminder.RecurringInterval[7..].Split(',', StringSplitOptions.RemoveEmptyEntries);
+                foreach (var d in days)
+                    if (Enum.TryParse<DayOfWeek>(d, out var parsed)) model.CustomDays.Add(parsed);
+            }
         }
         else
         {
             isEdit = false;
-            model = new ReminderFormModel { OccursAt = DateTime.Now.AddHours(1) };
+            model = new ReminderFormModel();
+        }
+
+        await LoadAvailableTargetsAsync();
+        LoadSelectedTargetsFromReminder();
+        await RefreshQuotaWarning();
+    }
+
+    private async Task LoadAvailableTargetsAsync()
+    {
+        availablePushTargets.Clear();
+        availableEmailTargets.Clear();
+        availablePhoneTargets.Clear();
+
+        if (CurrentUser is null) return;
+
+        var pushSubs = Db.PushSubscriptions
+            .Where(x => x.UserId == CurrentUser.Id)
+            .OrderByDescending(x => x.CreatedAt)
+            .ToList();
+
+        var idx = 1;
+        foreach (var p in pushSubs)
+        {
+            var type = string.IsNullOrWhiteSpace(p.DeviceType) ? "Unknown Device" : p.DeviceType;
+            var label = $"{type} #{idx}";
+            availablePushTargets.Add(new TargetOption(p.Endpoint, label));
+            idx++;
+        }
+
+        if (!string.IsNullOrWhiteSpace(CurrentUser.Email) && CurrentUser.EmailConfirmed)
+            availableEmailTargets.Add(new TargetOption(CurrentUser.Email, $"Primary: {CurrentUser.Email}"));
+
+        if (!string.IsNullOrWhiteSpace(CurrentUser.PhoneNumber) && CurrentUser.PhoneNumberConfirmed)
+            availablePhoneTargets.Add(new TargetOption(CurrentUser.PhoneNumber, $"Primary: {CurrentUser.PhoneNumber}"));
+
+        var contactEndpoints = Db.UserContactEndpoints
+            .Where(x => x.UserId == CurrentUser.Id && x.IsConfirmed)
+            .OrderByDescending(x => x.CreatedAt)
+            .ToList();
+
+        foreach (var ep in contactEndpoints)
+        {
+            if (ep.Channel == NotificationChannel.Email)
+            {
+                if (!availableEmailTargets.Any(x => string.Equals(x.Value, ep.Value, StringComparison.OrdinalIgnoreCase)))
+                    availableEmailTargets.Add(new TargetOption(ep.Value, string.IsNullOrWhiteSpace(ep.Label) ? ep.Value : $"{ep.Label} ({ep.Value})"));
+            }
+            else if (ep.Channel == NotificationChannel.SMS || ep.Channel == NotificationChannel.Voice)
+            {
+                if (!availablePhoneTargets.Any(x => string.Equals(x.Value, ep.Value, StringComparison.OrdinalIgnoreCase)))
+                    availablePhoneTargets.Add(new TargetOption(ep.Value, string.IsNullOrWhiteSpace(ep.Label) ? ep.Value : $"{ep.Label} ({ep.Value})"));
+            }
         }
     }
 
-    void ToggleChannel(NotificationChannel ch, bool value)
+    private void LoadSelectedTargetsFromReminder()
     {
-        if (value) model.Channels.Add(ch);
-        else model.Channels.Remove(ch);
+        selectedPushTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        selectedEmailTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        selectedPhoneTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (Reminder?.Targets == null) return;
+
+        foreach (var t in Reminder.Targets)
+        {
+            switch (t.Channel)
+            {
+                case NotificationChannel.Push:
+                    selectedPushTargets.Add(t.TargetValue);
+                    break;
+                case NotificationChannel.Email:
+                    selectedEmailTargets.Add(t.TargetValue);
+                    break;
+                case NotificationChannel.SMS:
+                case NotificationChannel.Voice:
+                    selectedPhoneTargets.Add(t.TargetValue);
+                    break;
+            }
+        }
     }
 
-    string GetChannelEmoji(NotificationChannel ch) => ch switch
-    {
-        NotificationChannel.Email => "📧",
-        NotificationChannel.Push => "🔔",
-        NotificationChannel.SMS => "📱",
-        NotificationChannel.Voice => "📞",
-        _ => "🔔"
-    };
+    private static string ShortValue(string value)
+        => string.IsNullOrWhiteSpace(value) ? "(unknown)" : (value.Length > 42 ? value[..42] + "…" : value);
 
-    async Task HandleSubmit()
+    private async Task RefreshQuotaWarning()
     {
-        isSaving = true;
-        errorMessage = null;
+        quotaWarning = null;
+        if (CurrentUser is null) return;
+
+        var info = await SubSvc.GetQuotaInfoAsync(CurrentUser);
+
+        var warnings = new List<string>();
+        if (model.Channels.Contains(NotificationChannel.SMS) && info.SmsLimitPerMonth > 0)
+        {
+            var left = info.SmsLimitPerMonth - info.SmsUsedThisMonth;
+            if (left <= 0) warnings.Add($"SMS quota reached ({info.SmsUsedThisMonth}/{info.SmsLimitPerMonth})");
+            else if (left <= 10) warnings.Add($"SMS quota almost reached ({info.SmsUsedThisMonth}/{info.SmsLimitPerMonth})");
+        }
+
+        if (model.Channels.Contains(NotificationChannel.Voice) && info.VoiceLimitPerMonth > 0)
+        {
+            var left = info.VoiceLimitPerMonth - info.VoiceUsedThisMonth;
+            if (left <= 0) warnings.Add($"Voice call quota reached ({info.VoiceUsedThisMonth}/{info.VoiceLimitPerMonth})");
+            else if (left <= 5) warnings.Add($"Voice quota almost reached ({info.VoiceUsedThisMonth}/{info.VoiceLimitPerMonth})");
+        }
+
+        if (warnings.Count > 0)
+            quotaWarning = string.Join(" • ", warnings);
+    }
+
+    async Task ToggleChannel(NotificationChannel ch, bool value)
+    {
+        if (value) model.Channels.Add(ch); else model.Channels.Remove(ch);
+
+        if (!value)
+        {
+            if (ch == NotificationChannel.Push) selectedPushTargets.Clear();
+            if (ch == NotificationChannel.Email) selectedEmailTargets.Clear();
+            if (ch == NotificationChannel.SMS || ch == NotificationChannel.Voice) selectedPhoneTargets.Clear();
+        }
+
+        await RefreshQuotaWarning();
+    }
+
+    void ToggleTarget(NotificationChannel ch, string value, bool selected)
+    {
+        var set = ch switch
+        {
+            NotificationChannel.Push => selectedPushTargets,
+            NotificationChannel.Email => selectedEmailTargets,
+            _ => selectedPhoneTargets
+        };
+
+        if (selected) set.Add(value); else set.Remove(value);
+    }
+
+    void TogglePhoneTarget(string value, bool selected)
+    {
+        if (selected) selectedPhoneTargets.Add(value); else selectedPhoneTargets.Remove(value);
+    }
+
+    void ToggleDay(DayOfWeek day)
+    {
+        if (model.CustomDays.Contains(day)) model.CustomDays.Remove(day); else model.CustomDays.Add(day);
+    }
+
+    void OnTimeChanged(ChangeEventArgs e)
+    {
+        model.TimeOfDay = e.Value?.ToString() ?? model.TimeOfDay;
+    }
+
+    bool IsOneTimePastSelection()
+    {
+        if (model.ReminderType != "OneTime") return false;
+        if (!TimeOnly.TryParse(model.TimeOfDay, out var tod)) return false;
+        var localDt = new DateTime(model.OneTimeDate.Year, model.OneTimeDate.Month, model.OneTimeDate.Day, tod.Hour, tod.Minute, 0, DateTimeKind.Unspecified);
+        var utc = ConvertZoneToUtc(localDt, model.TimeZoneId);
+        return utc <= DateTime.UtcNow;
+    }
+
+    private async Task RegisterCurrentDevice()
+    {
         try
         {
-            if (isEdit && Reminder != null)
+            registeringDevice = true;
+            pushDeviceStatus = null;
+
+            var vapidPublic = Config["Vapid:PublicKey"];
+            if (string.IsNullOrWhiteSpace(vapidPublic) || vapidPublic.Contains("YOUR_"))
+            {
+                pushDeviceStatus = "VAPID public key is not configured yet.";
+                return;
+            }
+
+            var ok = await JS.InvokeAsync<bool>("registerPushSubscription", vapidPublic);
+            if (ok)
+            {
+                await LoadAvailableTargetsAsync();
+                // auto-select latest registered device for convenience
+                var latest = availablePushTargets.FirstOrDefault();
+                if (latest is not null) selectedPushTargets.Add(latest.Value);
+                pushDeviceStatus = "Current device registered for push successfully.";
+            }
+            else
+            {
+                pushDeviceStatus = "Could not register this device. Please allow notifications and try again.";
+            }
+        }
+        catch (Exception ex)
+        {
+            pushDeviceStatus = $"Push registration failed: {ex.Message}";
+        }
+        finally
+        {
+            registeringDevice = false;
+        }
+    }
+
+    private async Task UnregisterCurrentDevice()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("unregisterPushSubscription");
+            pushDeviceStatus = "Current device unregistered from push.";
+        }
+        catch (Exception ex)
+        {
+            pushDeviceStatus = $"Unregister failed: {ex.Message}";
+        }
+    }
+
+    private async Task HandleSubmit()
+    {
+        try
+        {
+            isSaving = true;
+            errorMessage = null;
+
+            var localDate = model.ReminderType == "OneTime" ? model.OneTimeDate : DateTime.Today;
+            if (!TimeOnly.TryParse(model.TimeOfDay, out var tod))
+                tod = TimeOnly.FromDateTime(DateTime.Now.AddHours(1));
+
+            if (!string.IsNullOrWhiteSpace(model.CustomIconUrl))
+            {
+                var ok = Uri.TryCreate(model.CustomIconUrl, UriKind.Absolute, out var uri)
+                         && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+                if (!ok)
+                    throw new InvalidOperationException("Custom icon URL must be a valid absolute http/https URL.");
+            }
+
+            var localDt = new DateTime(localDate.Year, localDate.Month, localDate.Day, tod.Hour, tod.Minute, 0, DateTimeKind.Unspecified);
+            var utcDt = ConvertZoneToUtc(localDt, model.TimeZoneId);
+            var recurring = model.ReminderType == "OneTime" ? "None" : model.RecurringInterval;
+            if (model.ReminderType == "Recurring" && model.RecurringInterval == "Custom" && model.CustomDays.Any())
+                recurring = "Custom:" + string.Join(",", model.CustomDays.OrderBy(x => (int)x));
+
+            // Prevent immediate fire for recurring reminders when selected time already passed today.
+            if (model.ReminderType == "Recurring" && utcDt <= DateTime.UtcNow)
+            {
+                var adjustedLocal = localDt;
+                if (recurring.StartsWith("Custom:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var selectedDays = model.CustomDays.OrderBy(d => (int)d).ToList();
+                    if (selectedDays.Count > 0)
+                    {
+                        var probe = adjustedLocal;
+                        for (int i = 0; i < 8; i++)
+                        {
+                            probe = probe.AddDays(1);
+                            if (selectedDays.Contains(probe.DayOfWeek)) { adjustedLocal = probe; break; }
+                        }
+                    }
+                    else
+                    {
+                        adjustedLocal = adjustedLocal.AddDays(1);
+                    }
+                }
+                else if (recurring == "Weekly") adjustedLocal = adjustedLocal.AddDays(7);
+                else if (recurring == "Monthly") adjustedLocal = adjustedLocal.AddMonths(1);
+                else if (recurring == "Annually") adjustedLocal = adjustedLocal.AddYears(1);
+                else adjustedLocal = adjustedLocal.AddDays(1); // Daily/default
+
+                utcDt = ConvertZoneToUtc(adjustedLocal, model.TimeZoneId);
+            }
+
+            var oneTimePast = model.ReminderType == "OneTime" && utcDt <= DateTime.UtcNow;
+
+            if (isEdit && Reminder is not null)
             {
                 Reminder.Name = model.Name;
                 Reminder.Description = model.Description;
-                Reminder.OccursAt = model.OccursAt.ToUniversalTime();
+                Reminder.Icon = model.Icon;
+                Reminder.CustomIconUrl = model.CustomIconUrl;
+                Reminder.OccursAt = utcDt;
                 Reminder.TimeZoneId = model.TimeZoneId;
-                Reminder.RecurringInterval = model.RecurringInterval;
+                Reminder.RecurringInterval = recurring;
                 Reminder.Channels.Clear();
-                foreach (var ch in model.Channels)
-                    Reminder.Channels.Add(new ReminderChannel { Channel = ch });
+                foreach (var ch in model.Channels) Reminder.Channels.Add(new ReminderChannel { Channel = ch });
+
+                Reminder.Targets.Clear();
+                foreach (var t in BuildTargets()) Reminder.Targets.Add(t);
+
+                if (utcDt > DateTime.UtcNow)
+                {
+                    Reminder.IsActive = true;
+                    Reminder.IsPaused = false;
+                }
+                else if (oneTimePast)
+                {
+                    Reminder.IsActive = false;
+                    Reminder.IsPaused = false;
+                }
+
                 await ReminderSvc.UpdateAsync(Reminder);
             }
             else
@@ -184,18 +663,24 @@
                     UserId = CurrentUser!.Id,
                     Name = model.Name,
                     Description = model.Description,
-                    OccursAt = model.OccursAt.ToUniversalTime(),
+                    Icon = model.Icon,
+                    CustomIconUrl = model.CustomIconUrl,
+                    OccursAt = utcDt,
                     TimeZoneId = model.TimeZoneId,
-                    RecurringInterval = model.RecurringInterval,
-                    Channels = model.Channels.Select(ch => new ReminderChannel { Channel = ch }).ToList()
+                    RecurringInterval = recurring,
+                    IsActive = !oneTimePast,
+                    IsPaused = false,
+                    Channels = model.Channels.Select(ch => new ReminderChannel { Channel = ch }).ToList(),
+                    Targets = BuildTargets()
                 };
                 await ReminderSvc.CreateAsync(reminder);
             }
+
             await OnSaved.InvokeAsync();
         }
         catch (Exception ex)
         {
-            errorMessage = "An error occurred: " + ex.Message;
+            errorMessage = ex.Message;
         }
         finally
         {
@@ -203,18 +688,159 @@
         }
     }
 
-    private class ReminderFormModel
+    private Task HandleInvalidSubmit(EditContext _)
+        => JS.InvokeVoidAsync("scrollToFirstValidationError").AsTask();
+
+    private static DateTime ConvertUtcToZone(DateTime utc, string tzId)
+    {
+        try
+        {
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(string.IsNullOrWhiteSpace(tzId) ? "UTC" : tzId);
+            return TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), tz);
+        }
+        catch
+        {
+            return DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+        }
+    }
+
+    private static DateTime ConvertZoneToUtc(DateTime localUnspecified, string tzId)
+    {
+        try
+        {
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(string.IsNullOrWhiteSpace(tzId) ? "UTC" : tzId);
+            return TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localUnspecified, DateTimeKind.Unspecified), tz);
+        }
+        catch
+        {
+            return DateTime.SpecifyKind(localUnspecified, DateTimeKind.Unspecified).ToUniversalTime();
+        }
+    }
+
+    private static List<TimeZoneOption> BuildTimezoneOptions()
+    {
+        return TimeZoneInfo.GetSystemTimeZones()
+            .Select(tz => new { tz.Id, tz.DisplayName, tz.BaseUtcOffset })
+            .OrderBy(x => x.BaseUtcOffset)
+            .ThenBy(x => x.DisplayName)
+            .Select(x => new TimeZoneOption(
+                x.Id,
+                $"(UTC{FormatOffset(x.BaseUtcOffset)}) {x.DisplayName}"))
+            .ToList();
+    }
+
+    private static string FormatOffset(TimeSpan offset)
+    {
+        var sign = offset < TimeSpan.Zero ? "-" : "+";
+        var abs = offset.Duration();
+        return $"{sign}{abs:hh\\:mm}";
+    }
+
+    private async Task SendPrimaryEmailConfirmationFromModal()
+    {
+        if (CurrentUser is null || string.IsNullOrWhiteSpace(CurrentUser.Email)) return;
+
+        var token = await UserManager.GenerateEmailConfirmationTokenAsync(CurrentUser);
+        var encoded = Uri.EscapeDataString(token);
+        var link = $"{NavigationBase()}confirm-email?userId={Uri.EscapeDataString(CurrentUser.Id)}&code={encoded}";
+
+        await SendEmailAsync(CurrentUser.Email, "Confirm your Reminders email", $"Please confirm your email by opening this link: {link}");
+        pushDeviceStatus = "Confirmation email sent.";
+    }
+
+    private string NavigationBase()
+    {
+        var baseUri = Config["AppBaseUrl"];
+        if (!string.IsNullOrWhiteSpace(baseUri)) return baseUri.TrimEnd('/') + "/";
+        return "https://localhost:5001/";
+    }
+
+    private async Task SendEmailAsync(string to, string subject, string body)
+    {
+        var host = Config["Smtp:Host"];
+        var port = int.TryParse(Config["Smtp:Port"], out var p) ? p : 587;
+        var username = Config["Smtp:Username"];
+        var password = Config["Smtp:Password"];
+        var from = Config["Smtp:FromEmail"] ?? "noreply@localhost";
+
+        if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+            return;
+
+        using var client = new System.Net.Mail.SmtpClient(host, port)
+        {
+            EnableSsl = true,
+            Credentials = new System.Net.NetworkCredential(username, password)
+        };
+
+        using var mail = new System.Net.Mail.MailMessage(from, to, subject, body);
+        await client.SendMailAsync(mail);
+    }
+
+    private List<ReminderTarget> BuildTargets()
+    {
+        var list = new List<ReminderTarget>();
+
+        if (model.Channels.Contains(NotificationChannel.Push))
+        {
+            foreach (var val in selectedPushTargets)
+            {
+                var label = availablePushTargets.FirstOrDefault(x => string.Equals(x.Value, val, StringComparison.OrdinalIgnoreCase))?.Label
+                            ?? "Push Device";
+                list.Add(new ReminderTarget { Channel = NotificationChannel.Push, TargetType = "PushDevice", TargetValue = val, Label = label });
+            }
+        }
+
+        if (model.Channels.Contains(NotificationChannel.Email))
+        {
+            foreach (var val in selectedEmailTargets)
+                list.Add(new ReminderTarget { Channel = NotificationChannel.Email, TargetType = "EmailAddress", TargetValue = val, Label = val });
+        }
+
+        if (model.Channels.Contains(NotificationChannel.SMS))
+        {
+            foreach (var val in selectedPhoneTargets)
+                list.Add(new ReminderTarget { Channel = NotificationChannel.SMS, TargetType = "PhoneNumber", TargetValue = val, Label = val });
+        }
+
+        if (model.Channels.Contains(NotificationChannel.Voice))
+        {
+            foreach (var val in selectedPhoneTargets)
+                list.Add(new ReminderTarget { Channel = NotificationChannel.Voice, TargetType = "PhoneNumber", TargetValue = val, Label = val });
+        }
+
+        return list;
+    }
+
+    private static string GetChannelEmoji(NotificationChannel ch) => ch switch
+    {
+        NotificationChannel.Email => "📧",
+        NotificationChannel.Push => "🔔",
+        NotificationChannel.SMS => "📱",
+        NotificationChannel.Voice => "📞",
+        _ => "🔔"
+    };
+
+    private sealed record TargetOption(string Value, string Label);
+    private sealed record TimeZoneOption(string Id, string DisplayName);
+
+    private sealed class ReminderFormModel
     {
         [System.ComponentModel.DataAnnotations.Required]
         [System.ComponentModel.DataAnnotations.MaxLength(200)]
-        public string Name { get; set; } = "";
+        public string Name { get; set; } = string.Empty;
         public string? Description { get; set; }
+        public string Icon { get; set; } = "🔔";
+        [System.ComponentModel.DataAnnotations.Url(ErrorMessage = "Please provide a valid URL")]
+        public string? CustomIconUrl { get; set; }
 
-        [System.ComponentModel.DataAnnotations.Required]
-        public DateTime OccursAt { get; set; } = DateTime.Now.AddHours(1);
+        public string ReminderType { get; set; } = "OneTime"; // OneTime | Recurring
+        public DateTime OneTimeDate { get; set; } = DateTime.Today;
+        public string TimeOfDay { get; set; } = DateTime.Now.AddHours(1).ToString("HH:mm");
         public string TimeZoneId { get; set; } = "UTC";
-        public string RecurringInterval { get; set; } = "None";
-        public HashSet<NotificationChannel> Channels { get; set; } = new();
+        public string RecurringInterval { get; set; } = "Daily";
+        public HashSet<DayOfWeek> CustomDays { get; set; } = new();
+
+        public HashSet<NotificationChannel> Channels { get; set; } =
+            new([NotificationChannel.Email, NotificationChannel.Push]);
     }
 }
-

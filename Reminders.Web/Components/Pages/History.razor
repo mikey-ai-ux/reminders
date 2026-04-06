@@ -1,0 +1,146 @@
+@page "/history"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Identity
+@inject IReminderService ReminderSvc
+@inject UserManager<AppUser> UserManager
+@inject AuthenticationStateProvider AuthStateProvider
+@rendermode InteractiveServer
+
+<PageTitle>Notification History</PageTitle>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">📨 Sent Reminder History</h2>
+    </div>
+
+    <div class="filters">
+        <input class="form-input" placeholder="Search message/name..." @bind="search" />
+        <select class="form-input" @bind="channelFilter">
+            <option value="">All channels</option>
+            @foreach (var ch in Enum.GetValues<NotificationChannel>())
+            {
+                <option value="@ch">@ch</option>
+            }
+        </select>
+        <select class="form-input" @bind="statusFilter">
+            <option value="">All status</option>
+            @foreach (var st in Enum.GetValues<NotificationStatus>())
+            {
+                <option value="@st">@st</option>
+            }
+        </select>
+        <select class="form-input" @bind="sortBy">
+            <option value="sent_desc">Newest sent</option>
+            <option value="sent_asc">Oldest sent</option>
+            <option value="channel_asc">Channel A-Z</option>
+            <option value="status_asc">Status</option>
+        </select>
+    </div>
+
+    <div class="table-wrap">
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>Reminder</th>
+                    <th>Channel</th>
+                    <th>Device</th>
+                    <th>Status</th>
+                    <th>Scheduled</th>
+                    <th>Sent</th>
+                    <th>Timezone</th>
+                    <th>Message</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (!Filtered.Any())
+                {
+                    <tr><td colspan="8" class="empty">No history found for current filters.</td></tr>
+                }
+                else
+                {
+                    @foreach (var n in Filtered)
+                    {
+                        <tr>
+                            <td>@n.ReminderName</td>
+                            <td>@n.Channel</td>
+                            <td>@(n.Channel == NotificationChannel.Push ? (string.IsNullOrWhiteSpace(n.DeviceType) ? "Unknown" : n.DeviceType) : "-")</td>
+                            <td><span class="badge @(n.Status == NotificationStatus.Sent ? "badge-active" : n.Status == NotificationStatus.Failed ? "badge-paused" : "badge-inactive")">@n.Status</span></td>
+                            <td>@FormatUtc(n.ScheduledForUtc, n.TimeZoneId)</td>
+                            <td>@(n.SentAt.HasValue ? FormatUtc(n.SentAt.Value, n.TimeZoneId) : "-")</td>
+                            <td>@n.TimeZoneId</td>
+                            <td class="msg">@n.MessageSnapshot</td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+.filters{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:.6rem;margin-bottom:.9rem}
+.table-wrap{overflow:auto}
+.history-table{width:100%;border-collapse:collapse}
+.history-table th,.history-table td{padding:.55rem .6rem;border-bottom:1px solid var(--color-border);vertical-align:top;text-align:left;font-size:.85rem}
+.history-table th{font-size:.78rem;text-transform:uppercase;color:var(--color-text-muted)}
+.msg{max-width:380px;white-space:normal}
+.empty{text-align:center;color:var(--color-text-muted);padding:1rem}
+@@media (max-width:900px){.filters{grid-template-columns:1fr 1fr}.msg{max-width:220px}}
+</style>
+
+@code {
+    private List<ReminderNotification> all = new();
+    private string search = string.Empty;
+    private string channelFilter = string.Empty;
+    private string statusFilter = string.Empty;
+    private string sortBy = "sent_desc";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = await UserManager.GetUserAsync(auth.User);
+        if (user is not null)
+            all = await ReminderSvc.GetNotificationHistoryAsync(user.Id);
+    }
+
+    private IEnumerable<ReminderNotification> Filtered
+    {
+        get
+        {
+            var q = all.AsEnumerable();
+            if (!string.IsNullOrWhiteSpace(search))
+                q = q.Where(x => (x.ReminderName?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)
+                              || (x.MessageSnapshot?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+            if (!string.IsNullOrWhiteSpace(channelFilter) && Enum.TryParse<NotificationChannel>(channelFilter, out var ch))
+                q = q.Where(x => x.Channel == ch);
+
+            if (!string.IsNullOrWhiteSpace(statusFilter) && Enum.TryParse<NotificationStatus>(statusFilter, out var st))
+                q = q.Where(x => x.Status == st);
+
+            q = sortBy switch
+            {
+                "sent_asc" => q.OrderBy(x => x.SentAt ?? x.CreatedAt),
+                "channel_asc" => q.OrderBy(x => x.Channel.ToString()),
+                "status_asc" => q.OrderBy(x => x.Status.ToString()),
+                _ => q.OrderByDescending(x => x.SentAt ?? x.CreatedAt)
+            };
+
+            return q;
+        }
+    }
+
+    private static string FormatUtc(DateTime utc, string tzId)
+    {
+        try
+        {
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(string.IsNullOrWhiteSpace(tzId) ? "UTC" : tzId);
+            var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), tz);
+            return local.ToString("yyyy-MM-dd HH:mm");
+        }
+        catch
+        {
+            return utc.ToString("yyyy-MM-dd HH:mm") + " UTC";
+        }
+    }
+}

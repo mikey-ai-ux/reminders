@@ -2,7 +2,7 @@
 <div class="reminder-card @(Reminder.IsPaused ? "paused" : "") @(!Reminder.IsActive ? "inactive" : "")">
     <div class="card-header">
         <div class="card-title-row">
-            <h3 class="card-title">@Reminder.Name</h3>
+            <h3 class="card-title"><span class="title-icon">@Reminder.Icon</span> @Reminder.Name</h3>
             <span class="status-badge @(Reminder.IsPaused ? "badge-paused" : Reminder.IsActive ? "badge-active" : "badge-inactive")">
                 @(Reminder.IsPaused ? "Paused" : Reminder.IsActive ? "Active" : "Inactive")
             </span>
@@ -18,43 +18,58 @@
             <span class="meta-icon">🕐</span>
             <span>@FormatOccursAt()</span>
         </div>
-        @if (Reminder.RecurringInterval != "None")
-        {
-            <div class="meta-item">
-                <span class="meta-icon">🔁</span>
-                <span>@Reminder.RecurringInterval</span>
-            </div>
-        }
+        <div class="meta-item">
+            <span class="meta-icon">🔁</span>
+            <span>@GetRecurrenceLabel()</span>
+        </div>
         <div class="meta-item">
             <span class="meta-icon">🌍</span>
             <span>@Reminder.TimeZoneId</span>
         </div>
     </div>
 
-    @if (Reminder.Channels.Any())
+    @if (Reminder.Targets.Any())
     {
-        <div class="channel-badges">
-            @foreach (var ch in Reminder.Channels)
+        <div class="targets-box">
+            @foreach (var grp in Reminder.Targets.GroupBy(t => t.Channel))
             {
-                <span class="channel-badge channel-@ch.Channel.ToString().ToLower()">
-                    @GetChannelEmoji(ch.Channel) @ch.Channel
-                </span>
+                <div class="target-line">
+                    <strong>@GetChannelEmoji(grp.Key) @grp.Key:</strong>
+                    <span>@string.Join(", ", grp.Select(x => string.IsNullOrWhiteSpace(x.Label) ? x.TargetValue : x.Label))</span>
+                </div>
             }
         </div>
     }
 
     <div class="card-actions">
-        <button class="btn btn-sm btn-ghost" @onclick="() => OnEdit.InvokeAsync(Reminder)">✏️ Edit</button>
-        @if (Reminder.IsPaused)
+        <button class="btn btn-sm btn-ghost action-left" @onclick="() => OnEdit.InvokeAsync(Reminder)">🖉 Edit</button>
+
+        @if (IsExpiredOneTime(Reminder))
         {
-            <button class="btn btn-sm btn-ghost" @onclick="() => OnResume.InvokeAsync(Reminder.Id)">▶️ Resume</button>
+            <span class="action-center muted">—</span>
+        }
+        else if (Reminder.IsPaused)
+        {
+            <button class="btn btn-sm btn-ghost action-center" @onclick="() => OnResume.InvokeAsync(Reminder.Id)">▶️ Resume</button>
+        }
+        else if (!Reminder.IsActive)
+        {
+            <button class="btn btn-sm btn-ghost action-center" @onclick="() => OnResume.InvokeAsync(Reminder.Id)">✅ Activate</button>
         }
         else
         {
-            <button class="btn btn-sm btn-ghost" @onclick="() => OnPause.InvokeAsync(Reminder.Id)">⏸️ Pause</button>
+            <button class="btn btn-sm btn-ghost action-center" @onclick="() => OnPause.InvokeAsync(Reminder.Id)">⏸️ Pause</button>
         }
-        <button class="btn btn-sm btn-danger-ghost" @onclick="() => OnDelete.InvokeAsync(Reminder.Id)">🗑️ Delete</button>
+
+        <button class="btn btn-sm btn-ghost action-right" @onclick="() => OnDelete.InvokeAsync(Reminder.Id)">🗑️ Delete</button>
     </div>
+
+    @if (!Reminder.IsActive && IsExpiredOneTime(Reminder))
+    {
+        <div class="chips-row">
+            <span class="badge badge-paused">Expired one-time reminder</span>
+        </div>
+    }
 </div>
 
 <style>
@@ -62,7 +77,8 @@
 .reminder-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
 .reminder-card.paused { opacity: 0.75; }
 .card-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
-.card-title { font-size: 1rem; font-weight: 700; color: var(--color-text); margin: 0; }
+.card-title { font-size: 1rem; font-weight: 700; color: var(--color-text); margin: 0; display:flex; align-items:center; gap:.4rem; }
+.title-icon { font-size: 1.1rem; }
 .card-desc { font-size: 0.85rem; color: var(--color-text-muted); margin: 0.25rem 0 0; }
 .status-badge { font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 20px; white-space: nowrap; flex-shrink: 0; }
 .badge-active { background: rgba(34,197,94,0.15); color: #22c55e; }
@@ -73,7 +89,17 @@
 .meta-icon { font-size: 0.875rem; }
 .channel-badges { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .channel-badge { font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 20px; border: 1px solid var(--color-border); color: var(--color-text-muted); }
+.targets-box { border:1px dashed var(--color-border); border-radius:10px; padding:.5rem .6rem; display:flex; flex-direction:column; gap:.3rem; background:var(--color-surface-2); }
+.target-line { font-size:.78rem; color:var(--color-text-muted); display:flex; gap:.35rem; flex-wrap:wrap; }
 .card-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; border-top: 1px solid var(--color-border); padding-top: 0.75rem; }
+</style>
+
+<style>
+.card-actions { display:grid; grid-template-columns: 1fr 1fr 1fr; align-items:center; border-top:1px solid var(--color-border); padding-top:.75rem; gap:.35rem; }
+.action-left { justify-self:start; }
+.action-center { justify-self:center; }
+.action-right { justify-self:end; }
+.chips-row { margin-top:.55rem; }
 </style>
 
 @code {
@@ -83,6 +109,21 @@
     [Parameter] public EventCallback<int> OnPause { get; set; }
     [Parameter] public EventCallback<int> OnResume { get; set; }
     [Parameter] public EventCallback<int> OnDelete { get; set; }
+
+    private static bool IsExpiredOneTime(Reminder r)
+        => string.Equals(r.RecurringInterval, "None", StringComparison.OrdinalIgnoreCase)
+           && r.OccursAt <= DateTime.UtcNow;
+
+    private string GetRecurrenceLabel()
+    {
+        if (string.IsNullOrWhiteSpace(Reminder.RecurringInterval) || Reminder.RecurringInterval == "None")
+            return "One-time";
+
+        if (Reminder.RecurringInterval.StartsWith("Custom:", StringComparison.OrdinalIgnoreCase))
+            return "One-time";
+
+        return Reminder.RecurringInterval;
+    }
 
     private string FormatOccursAt()
     {

@@ -33,12 +33,15 @@ public class PushController : ControllerBase
         var user = await _userManager.GetUserAsync(User);
         if (user == null) return Unauthorized();
 
+        var deviceType = DetectDeviceType(Request.Headers.UserAgent.ToString());
+
         // Avoid duplicate subscriptions
         var existing = _db.PushSubscriptions.FirstOrDefault(s => s.UserId == user.Id && s.Endpoint == request.Endpoint);
         if (existing != null)
         {
             existing.P256dh = request.P256dh;
             existing.Auth = request.Auth;
+            existing.DeviceType = deviceType;
         }
         else
         {
@@ -48,6 +51,7 @@ public class PushController : ControllerBase
                 Endpoint = request.Endpoint,
                 P256dh = request.P256dh,
                 Auth = request.Auth,
+                DeviceType = deviceType,
                 CreatedAt = DateTime.UtcNow
             });
         }
@@ -71,6 +75,27 @@ public class PushController : ControllerBase
         }
 
         return Ok();
+    }
+
+    private static string DetectDeviceType(string userAgent)
+    {
+        if (string.IsNullOrWhiteSpace(userAgent)) return "Unknown";
+        var ua = userAgent.ToLowerInvariant();
+
+        var os = ua.Contains("iphone") || ua.Contains("ipad") || ua.Contains("ios") ? "iOS"
+            : ua.Contains("android") ? "Android"
+            : ua.Contains("windows") ? "Windows"
+            : (ua.Contains("mac os") || ua.Contains("macintosh")) ? "macOS"
+            : ua.Contains("linux") ? "Linux"
+            : "Other";
+
+        var browser = ua.Contains("edg/") ? "Edge"
+            : ua.Contains("chrome/") ? "Chrome"
+            : ua.Contains("safari/") && !ua.Contains("chrome/") ? "Safari"
+            : ua.Contains("firefox/") ? "Firefox"
+            : "Browser";
+
+        return $"{os} / {browser}";
     }
 }
 

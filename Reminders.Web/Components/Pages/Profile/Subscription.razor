@@ -23,27 +23,25 @@
         </div>
     </div>
 
-    @if (currentUser?.SubscriptionTier == Reminders.Models.Enums.SubscriptionTier.Free)
-    {
-        <div class="upgrade-cta">
-            <div class="upgrade-content">
-                <h3>Upgrade to Pro</h3>
-                <p>Unlock SMS &amp; Voice notifications, unlimited reminders, and priority support.</p>
-                <ul class="upgrade-perks">
-                    <li>✅ Unlimited reminders</li>
-                    <li>✅ SMS notifications</li>
-                    <li>✅ Voice call reminders</li>
-                    <li>✅ Priority support</li>
+    <div class="plans-grid">
+        @foreach (var p in plans)
+        {
+            <div class="plan-card @(p.Highlight ? "highlight" : "")">
+                <h3>@p.Name</h3>
+                <div class="price">$@p.Price<span>/month</span></div>
+                <ul>
+                    <li>Email + Push included</li>
+                    <li>@p.SmsLimit SMS / month</li>
+                    <li>@p.VoiceLimit voice calls / month</li>
                 </ul>
-                <div class="upgrade-price">$9.99<span>/month</span></div>
+                <button class="btn btn-primary" @onclick="() => Upgrade(p.Id)">Choose @p.Name</button>
             </div>
-            <button class="btn btn-primary btn-lg" @onclick="Upgrade">Upgrade to Pro →</button>
-        </div>
-    }
-    else
+        }
+    </div>
+
+    @if (currentUser?.SubscriptionTier != Reminders.Models.Enums.SubscriptionTier.Free)
     {
         <div class="manage-sub">
-            <p class="manage-text">You're on the <strong>Pro plan</strong>. Thank you for supporting Reminders!</p>
             <button class="btn btn-secondary" @onclick="CancelSubscription">Cancel Subscription</button>
         </div>
     }
@@ -53,22 +51,27 @@
 .current-plan { display: flex; align-items: center; margin-bottom: 1.5rem; }
 .tier-badge-lg { font-size: 0.9rem; font-weight: 700; padding: 5px 14px; border-radius: 20px; }
 .tier-free { background: var(--color-border); color: var(--color-text-muted); }
-.tier-pro { background: rgba(67,97,238,0.15); color: var(--color-primary); }
+.tier-pro,.tier-business,.tier-enterprise { background: rgba(67,97,238,0.15); color: var(--color-primary); }
 .expiry { color: var(--color-text-muted); font-size: 0.85rem; margin: 0.5rem 0 0; }
-.upgrade-cta { background: var(--color-bg); border: 1px solid var(--color-primary); border-radius: 12px; padding: 1.5rem; display: flex; align-items: center; justify-content: space-between; gap: 2rem; flex-wrap: wrap; }
-.upgrade-cta h3 { font-size: 1.1rem; font-weight: 700; color: var(--color-text); margin: 0 0 0.5rem; }
-.upgrade-cta p { color: var(--color-text-muted); font-size: 0.875rem; margin: 0 0 1rem; }
-.upgrade-perks { list-style: none; padding: 0; margin: 0 0 1rem; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.875rem; color: var(--color-text-muted); }
-.upgrade-price { font-size: 1.5rem; font-weight: 800; color: var(--color-text); }
-.upgrade-price span { font-size: 0.9rem; font-weight: 400; color: var(--color-text-muted); }
-.manage-sub { text-align: center; padding: 2rem; }
-.manage-text { color: var(--color-text-muted); margin-bottom: 1.5rem; }
-.tab-content.card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 2rem; }
-.tab-content h2 { font-size: 1.25rem; font-weight: 700; margin: 0 0 1.5rem; color: var(--color-text); }
+.plans-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap:1rem; }
+.plan-card { border:1px solid var(--color-border); border-radius:12px; background:var(--color-surface); padding:1rem; }
+.plan-card.highlight { border-color: var(--color-primary); box-shadow: 0 4px 18px rgba(67,97,238,.15); }
+.plan-card h3 { margin:0 0 .5rem; }
+.price { font-size:1.5rem; font-weight:800; margin-bottom:.6rem; }
+.price span { font-size:.85rem; color:var(--color-text-muted); font-weight:400; }
+.plan-card ul { margin:.3rem 0 1rem; padding-left:1rem; color:var(--color-text-muted); }
+.manage-sub { margin-top:1rem; text-align:right; }
 </style>
 
 @code {
     private AppUser? currentUser;
+
+    private readonly List<PlanOption> plans =
+    [
+        new() { Id = 2, Name = "Starter", Price = 9.99m, SmsLimit = 100, VoiceLimit = 10 },
+        new() { Id = 3, Name = "Growth", Price = 29.99m, SmsLimit = 2000, VoiceLimit = 200, Highlight = true },
+        new() { Id = 4, Name = "Scale", Price = 99.99m, SmsLimit = 10000, VoiceLimit = 1000 }
+    ];
 
     protected override async Task OnInitializedAsync()
     {
@@ -76,19 +79,29 @@
         currentUser = await UserManager.GetUserAsync(authState.User);
     }
 
-    async Task Upgrade()
+    async Task Upgrade(int planId)
     {
         if (currentUser == null) return;
         var baseUrl = "https://localhost:5001";
-        var url = await SubSvc.CreateCheckoutSessionAsync(currentUser, 1, $"{baseUrl}/profile/subscription?success=true", $"{baseUrl}/profile/subscription?cancelled=true");
+        var url = await SubSvc.CreateCheckoutSessionAsync(currentUser, planId, $"{baseUrl}/profile/subscription?success=true", $"{baseUrl}/profile/subscription?cancelled=true");
         if (!string.IsNullOrEmpty(url))
         {
-            // Redirect to Stripe checkout
+            // TODO: navigate to stripe url client-side
         }
     }
 
     void CancelSubscription()
     {
         // TODO: Call Stripe to cancel subscription
+    }
+
+    private sealed class PlanOption
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public decimal Price { get; set; }
+        public int SmsLimit { get; set; }
+        public int VoiceLimit { get; set; }
+        public bool Highlight { get; set; }
     }
 }
