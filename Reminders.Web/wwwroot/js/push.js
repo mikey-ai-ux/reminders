@@ -109,5 +109,6 @@ window.canRegisterPushVapid = function () {
     const isIOSSafari = /iP(ad|hone|od)/.test(ua) && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
     if (isIOSSafari) return false;
 
-    return !!(window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window);
+    // Do not hard-block on isSecureContext here; let actual registration report precise failure.
+    return !!('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window);
 };

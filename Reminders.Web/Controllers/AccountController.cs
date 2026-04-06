@@ -21,7 +21,6 @@ public class AccountController : Controller
     }
 
     [HttpPost("/account/login")]
-    [ValidateAntiForgeryToken]
     public async Task<IActionResult> LoginPost([FromForm] string email, [FromForm] string password, [FromForm] bool rememberMe = false, [FromForm] string? returnUrl = null)
     {
         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
