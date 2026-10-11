@@ -10,6 +10,8 @@ namespace Reminders.Business.Services;
 
 public class ReminderScheduler : BackgroundService
 {
+    private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(20);
+
     private readonly IServiceProvider _services;
     private readonly ILogger<ReminderScheduler> _logger;
 
@@ -27,7 +29,7 @@ public class ReminderScheduler : BackgroundService
         {
             try
             {
-                await ProcessDueRemindersAsync(stoppingToken);
+                await ProcessDueRemindersAsync(DateTime.UtcNow, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -40,7 +42,7 @@ public class ReminderScheduler : BackgroundService
 
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
+                await Task.Delay(PollInterval, stoppingToken);
             }
             catch (OperationCanceledException) { break; }
         }
@@ -48,27 +50,22 @@ public class ReminderScheduler : BackgroundService
         _logger.LogInformation("ReminderScheduler stopped");
     }
 
-    private async Task ProcessDueRemindersAsync(CancellationToken ct)
+    public async Task ProcessDueRemindersAsync(DateTime now, CancellationToken ct = default)
     {
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
         var subscriptionService = scope.ServiceProvider.GetRequiredService<ISubscriptionService>();
 
-        var now = DateTime.UtcNow;
-        var recentCutoff = now.AddSeconds(-55);
-
         var dueReminders = await db.Reminders
             .Include(r => r.Channels)
             .Include(r => r.Targets)
             .Include(r => r.User)
-            .Where(r => r.IsActive
-                && !r.IsPaused
-                && r.OccursAt <= now
-                && (r.LastNotifiedAt == null || r.LastNotifiedAt < recentCutoff))
+            .Where(r => r.IsActive && !r.IsPaused && r.OccursAt <= now)
+            .AsSplitQuery()
             .ToListAsync(ct);
 
-        if (!dueReminders.Any()) return;
+        if (dueReminders.Count == 0) return;
 
         _logger.LogInformation("Found {Count} due reminders to process", dueReminders.Count);
         int sent = 0, failed = 0;
@@ -77,48 +74,51 @@ public class ReminderScheduler : BackgroundService
         {
             if (reminder.User == null) continue;
 
-            foreach (var channelEntry in reminder.Channels)
+            foreach (var channel in reminder.Channels.Select(c => c.Channel).Distinct())
             {
-                if (!subscriptionService.IsChannelAllowed(reminder.User, channelEntry.Channel))
+                if (!subscriptionService.IsChannelAllowed(reminder.User, channel))
                 {
                     _logger.LogDebug("Channel {Channel} not allowed for user {UserId} (tier: {Tier})",
-                        channelEntry.Channel, reminder.User.Id, reminder.User.SubscriptionTier);
+                        channel, reminder.User.Id, reminder.User.SubscriptionTier);
                     continue;
                 }
 
                 try
                 {
-                    await notificationService.DispatchAsync(reminder, channelEntry.Channel, reminder.User);
+                    await notificationService.DispatchAsync(reminder, channel, reminder.User);
                     sent++;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to dispatch {Channel} for reminder {ReminderId}", channelEntry.Channel, reminder.Id);
+                    _logger.LogError(ex, "Failed to dispatch {Channel} for reminder {ReminderId}", channel, reminder.Id);
                     failed++;
                 }
             }
 
             reminder.LastNotifiedAt = now;
 
-            if (reminder.RecurringInterval == "None")
+            // Jump straight to the next future occurrence: a reminder that was due while the app
+            // was down fires once, not once per missed occurrence.
+            var next = RecurrenceCalculator.GetNextOccurrenceUtc(
+                reminder.OccursAt, reminder.RecurringInterval, reminder.TimeZoneId, now, reminder.RecurrenceAnchorDay);
+
+            if (next.HasValue)
             {
-                reminder.IsActive = false;
+                reminder.OccursAt = next.Value;
             }
             else
             {
-                reminder.OccursAt = reminder.RecurringInterval switch
-                {
-                    "Daily" => reminder.OccursAt.AddDays(1),
-                    "Weekly" => reminder.OccursAt.AddDays(7),
-                    "Monthly" => reminder.OccursAt.AddMonths(1),
-                    _ => reminder.OccursAt
-                };
+                if (RecurrenceCalculator.IsRecurring(reminder.RecurringInterval))
+                    _logger.LogWarning("Reminder {ReminderId} has unsupported interval '{Interval}'; deactivating", reminder.Id, reminder.RecurringInterval);
+                reminder.IsActive = false;
             }
 
             reminder.UpdatedAt = now;
+
+            // Save per reminder so one bad row can't cause the rest to be sent again on the next pass.
+            await db.SaveChangesAsync(ct);
         }
 
-        await db.SaveChangesAsync(ct);
-        _logger.LogInformation("Reminder processing complete: {Sent} sent, {Failed} failed", sent, failed);
+        _logger.LogInformation("Reminder processing complete: {Sent} dispatched, {Failed} failed", sent, failed);
     }
 }

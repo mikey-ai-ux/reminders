@@ -23,7 +23,7 @@ public class PushNotificationSender : IPushNotificationSender
         _logger = logger;
     }
 
-    public async Task SendAsync(AppUser user, Reminder reminder, IEnumerable<string>? endpointFilter = null)
+    public async Task<int> SendAsync(AppUser user, Reminder reminder, IEnumerable<string>? endpointFilter = null)
     {
         var query = _db.PushSubscriptions
             .AsNoTracking()
@@ -41,7 +41,7 @@ public class PushNotificationSender : IPushNotificationSender
         if (!subscriptions.Any())
         {
             _logger.LogInformation("No push subscriptions for user {UserId}", user.Id);
-            return;
+            return 0;
         }
 
         var payload = JsonSerializer.Serialize(new
@@ -55,10 +55,15 @@ public class PushNotificationSender : IPushNotificationSender
             url = "/reminders"
         });
 
+        if (string.IsNullOrWhiteSpace(_vapid.PublicKey) || string.IsNullOrWhiteSpace(_vapid.PrivateKey)
+            || _vapid.PublicKey.Contains("YOUR_", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Push delivery is not configured (Vapid settings).");
+
         var client = new WebPushClient();
         client.SetVapidDetails(_vapid.Subject, _vapid.PublicKey, _vapid.PrivateKey);
 
         var staleIds = new List<int>();
+        var delivered = 0;
 
         foreach (var sub in subscriptions)
         {
@@ -66,9 +71,10 @@ public class PushNotificationSender : IPushNotificationSender
             {
                 var pushSub = new PushSubscription(sub.Endpoint, sub.P256dh, sub.Auth);
                 await client.SendNotificationAsync(pushSub, payload);
+                delivered++;
                 _logger.LogInformation("Push notification sent to user {UserId} endpoint {Endpoint}", user.Id, sub.Endpoint);
             }
-            catch (WebPushException ex) when ((int)ex.StatusCode == 410)
+            catch (WebPushException ex) when ((int)ex.StatusCode is 404 or 410)
             {
                 _logger.LogInformation("Stale push subscription {Id} for user {UserId} — removing", sub.Id, user.Id);
                 staleIds.Add(sub.Id);
@@ -85,5 +91,7 @@ public class PushNotificationSender : IPushNotificationSender
             _db.PushSubscriptions.RemoveRange(toRemove);
             await _db.SaveChangesAsync();
         }
+
+        return delivered;
     }
 }

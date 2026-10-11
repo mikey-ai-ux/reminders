@@ -5,8 +5,9 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject NavigationManager Nav
 @inject IJSRuntime JS
-@inject IConfiguration Config
 @inject Reminders.Data.AppDbContext Db
+@inject IVerificationSender VerificationSender
+@inject IWebHostEnvironment Env
 @rendermode InteractiveServer
 
 <PageTitle>My Profile — Reminders</PageTitle>
@@ -41,6 +42,10 @@ else
         <div class="tab-content card">
             <h2>Registration Info</h2>
 
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <div class="alert alert-error" role="alert">@errorMessage</div>
+            }
             @if (!string.IsNullOrWhiteSpace(successMessage))
             {
                 <div class="alert alert-success">@successMessage</div>
@@ -63,7 +68,7 @@ else
                         </span>
                         @if (!currentUser.EmailConfirmed)
                         {
-                            <button type="button" class="btn btn-sm btn-secondary" @onclick="GenerateEmailConfirmationLink">Generate confirmation email</button>
+                            <button type="button" class="btn btn-sm btn-secondary" @onclick="GenerateEmailConfirmationLink">Send confirmation email</button>
                         }
                     </div>
                     @if (!string.IsNullOrWhiteSpace(emailConfirmationLink))
@@ -84,7 +89,7 @@ else
                         </span>
                         @if (!currentUser.PhoneNumberConfirmed && !string.IsNullOrWhiteSpace(editModel.PhoneNumber))
                         {
-                            <button type="button" class="btn btn-sm btn-secondary" @onclick="GeneratePhoneCode">Send/Generate code</button>
+                            <button type="button" class="btn btn-sm btn-secondary" @onclick="GeneratePhoneCode">Send code</button>
                         }
                     </div>
                     @if (!string.IsNullOrWhiteSpace(phoneCodeHint))
@@ -93,7 +98,7 @@ else
                             <span class="badge badge-info">Code (dev): @phoneCodeHint</span>
                         </div>
                     }
-                    @if (!currentUser.PhoneNumberConfirmed)
+                    @if (!currentUser.PhoneNumberConfirmed && !string.IsNullOrWhiteSpace(editModel.PhoneNumber))
                     {
                         <div class="confirm-help">
                             <InputText @bind-Value="phoneCodeInput" class="form-input" placeholder="Enter phone confirmation code" />
@@ -105,12 +110,10 @@ else
                 <div class="form-group">
                     <label>Timezone</label>
                     <InputSelect @bind-Value="editModel.TimeZoneId" class="form-input">
-                        <option value="UTC">UTC</option>
-                        <option value="America/Los_Angeles">Pacific Time</option>
-                        <option value="America/New_York">Eastern Time</option>
-                        <option value="Europe/London">London</option>
-                        <option value="Europe/Paris">Paris</option>
-                        <option value="Asia/Tokyo">Tokyo</option>
+                        @foreach (var tz in TimeZoneOptions.All)
+                        {
+                            <option value="@tz.Id">@tz.DisplayName</option>
+                        }
                     </InputSelect>
                 </div>
 
@@ -141,7 +144,7 @@ else
                             <li>
                                 <div class="dev-main">
                                     <code>@ShortEndpoint(d.Endpoint)</code>
-                                    <span class="muted">@d.DeviceType • Added @d.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                                    <span class="muted">@d.DeviceType • Added @InUserZone(d.CreatedAt).ToString("yyyy-MM-dd HH:mm")</span>
                                 </div>
                                 <button type="button" class="btn btn-sm btn-danger-ghost" @onclick="() => RemoveDevice(d.Id)">Remove</button>
                             </li>
@@ -183,7 +186,7 @@ else
                                     {
                                         if (ep.Channel == Reminders.Models.Enums.NotificationChannel.Email)
                                         {
-                                            <button type="button" class="btn btn-sm btn-secondary" @onclick="() => GenerateEndpointEmailLink(ep.Id)">Generate confirmation email</button>
+                                            <button type="button" class="btn btn-sm btn-secondary" @onclick="() => GenerateEndpointEmailLink(ep.Id)">Send confirmation email</button>
                                             @if (endpointEmailLinks.TryGetValue(ep.Id, out var link) && !string.IsNullOrWhiteSpace(link))
                                             {
                                                 <button type="button" class="btn btn-sm btn-secondary" @onclick="() => CopyText(link)">Copy link</button>
@@ -191,7 +194,7 @@ else
                                         }
                                         else
                                         {
-                                            <button type="button" class="btn btn-sm btn-secondary" @onclick="() => GenerateEndpointPhoneCode(ep.Id)">Generate code</button>
+                                            <button type="button" class="btn btn-sm btn-secondary" @onclick="() => GenerateEndpointPhoneCode(ep.Id)">Send code</button>
                                             <input class="form-input" value="@GetEndpointPhoneCode(ep.Id)" @onchange="(e) => SetEndpointPhoneCode(ep.Id, e.Value?.ToString())" placeholder="Code" />
                                             <button type="button" class="btn btn-sm btn-primary" @onclick="() => ConfirmEndpointPhoneCode(ep.Id)">Confirm</button>
                                         }
@@ -241,7 +244,11 @@ else
     private bool isLoading = true;
     private string activeTab = "info";
     private string? successMessage;
+    private string? errorMessage;
     private bool copied;
+
+    [SupplyParameterFromQuery(Name = "confirm")]
+    public string? ConfirmResult { get; set; }
     private string? emailConfirmationLink;
     private string? phoneCodeHint;
     private string phoneCodeInput = string.Empty;
@@ -267,7 +274,18 @@ else
             editModel.DisplayName = currentUser.DisplayName ?? string.Empty;
             editModel.Email = currentUser.Email ?? string.Empty;
             editModel.PhoneNumber = currentUser.PhoneNumber ?? string.Empty;
-            editModel.TimeZoneId = string.IsNullOrWhiteSpace(currentUser.TimeZoneId) ? "UTC" : currentUser.TimeZoneId;
+            editModel.TimeZoneId = TimeZoneOptions.Normalize(currentUser.TimeZoneId);
+
+            (successMessage, errorMessage) = ConfirmResult switch
+            {
+                "email-ok" => ("Your email is confirmed.", (string?)null),
+                "endpoint-ok" => ("The endpoint is confirmed and can now be used in reminders.", null),
+                "endpoint-already" => ("That endpoint was already confirmed.", null),
+                "email-failed" => (null, "That email confirmation link is invalid or has expired. Send a new one below."),
+                "endpoint-failed" => (null, "That confirmation link is invalid or has expired. Send a new one below."),
+                "endpoint-missing" => (null, "That endpoint no longer exists."),
+                _ => ((string?)null, (string?)null)
+            };
 
             pushDevices = Db.PushSubscriptions
                 .Where(x => x.UserId == currentUser.Id)
@@ -283,6 +301,10 @@ else
         isLoading = false;
     }
 
+    // Stored times are UTC; show them in the user's own timezone, not the server's.
+    private DateTime InUserZone(DateTime utc) =>
+        TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), RecurrenceCalculator.ResolveTimeZone(currentUser?.TimeZoneId));
+
     private string GetInitial() => (currentUser?.DisplayName ?? currentUser?.Email ?? "?").FirstOrDefault().ToString().ToUpperInvariant();
 
     private async Task CopyCalendarUrl()
@@ -293,16 +315,35 @@ else
         copied = false;
     }
 
+    private void Ok(string message) { successMessage = message; errorMessage = null; }
+    private void Fail(string message) { errorMessage = message; successMessage = null; }
+
+    // Confirmation links and codes prove the user owns the address, so they are only ever shown
+    // on screen in Development. Everywhere else they must arrive by email or SMS.
+    private bool RevealSecrets => Env.IsDevelopment();
+
+    private static string NewCode() => System.Security.Cryptography.RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+
+    private static bool TryNormalizePhone(string? input, out string phone)
+    {
+        phone = new string((input ?? string.Empty).Where(c => !char.IsWhiteSpace(c) && c is not ('-' or '(' or ')' or '.')).ToArray());
+        if (phone.StartsWith("00", StringComparison.Ordinal)) phone = "+" + phone[2..];
+        return System.Text.RegularExpressions.Regex.IsMatch(phone, "^\\+[1-9]\\d{7,14}$");
+    }
+
     private async Task GenerateEmailConfirmationLink()
     {
         if (currentUser is null || string.IsNullOrWhiteSpace(currentUser.Email)) return;
 
         var token = await UserManager.GenerateEmailConfirmationTokenAsync(currentUser);
-        var encoded = Uri.EscapeDataString(token);
-        emailConfirmationLink = $"{Nav.BaseUri}confirm-email?userId={Uri.EscapeDataString(currentUser.Id)}&code={encoded}";
+        var link = $"{Nav.BaseUri}confirm-email?userId={Uri.EscapeDataString(currentUser.Id)}&code={Uri.EscapeDataString(token)}";
 
-        await SendEmailAsync(currentUser.Email, "Confirm your Reminders email", $"Please confirm your email by opening this link: {emailConfirmationLink}");
-        successMessage = "Confirmation email sent.";
+        var sent = await VerificationSender.SendEmailAsync(currentUser.Email, "Confirm your Reminders email", $"Please confirm your email by opening this link: {link}");
+        emailConfirmationLink = RevealSecrets ? link : null;
+
+        if (sent) Ok("Confirmation email sent. Open the link in it to confirm.");
+        else if (RevealSecrets) Ok("Email delivery is not set up, so the confirmation link is shown below (development only).");
+        else Fail("The confirmation email could not be sent. Email delivery is not set up on this server yet.");
     }
 
     private async Task CopyEmailLink()
@@ -313,23 +354,56 @@ else
 
     private async Task GeneratePhoneCode()
     {
-        if (currentUser is null || string.IsNullOrWhiteSpace(editModel.PhoneNumber)) return;
-        phoneCodeHint = await UserManager.GenerateChangePhoneNumberTokenAsync(currentUser, editModel.PhoneNumber);
+        if (currentUser is null) return;
+        if (!TryNormalizePhone(editModel.PhoneNumber, out var phone))
+        {
+            Fail("Invalid phone format. Use international format like +123456789 (or 00...).");
+            return;
+        }
+        editModel.PhoneNumber = phone;
+
+        var code = await UserManager.GenerateChangePhoneNumberTokenAsync(currentUser, phone);
+        var sent = await VerificationSender.SendSmsAsync(phone, $"Your Reminders confirmation code is {code}");
+        phoneCodeHint = RevealSecrets ? code : null;
+
+        if (sent) Ok("We sent a confirmation code by SMS. Enter it below.");
+        else if (RevealSecrets) Ok("SMS delivery is not set up, so the code is shown below (development only).");
+        else Fail("The confirmation code could not be sent. SMS delivery is not set up on this server yet.");
     }
 
     private async Task ConfirmPhoneCode()
     {
-        if (currentUser is null || string.IsNullOrWhiteSpace(editModel.PhoneNumber) || string.IsNullOrWhiteSpace(phoneCodeInput)) return;
-
-        var ok = await UserManager.VerifyChangePhoneNumberTokenAsync(currentUser, phoneCodeInput, editModel.PhoneNumber);
-        if (!ok)
+        if (currentUser is null || string.IsNullOrWhiteSpace(phoneCodeInput)) return;
+        if (!TryNormalizePhone(editModel.PhoneNumber, out var phone))
         {
-            successMessage = "Invalid phone code.";
+            Fail("Invalid phone format. Use international format like +123456789 (or 00...).");
             return;
         }
 
-        var result = await UserManager.ChangePhoneNumberAsync(currentUser, editModel.PhoneNumber, phoneCodeInput);
-        successMessage = result.Succeeded ? "Phone confirmed successfully." : string.Join("; ", result.Errors.Select(e => e.Description));
+        // ChangePhoneNumberAsync would also rotate the security stamp, which signs the user out of this
+        // session a few minutes later; verify the code and store the number directly instead.
+        if (!await UserManager.VerifyChangePhoneNumberTokenAsync(currentUser, phoneCodeInput.Trim(), phone))
+        {
+            Fail("Invalid or expired phone code.");
+            return;
+        }
+
+        var previous = (currentUser.PhoneNumber, currentUser.PhoneNumberConfirmed);
+        currentUser.PhoneNumber = phone;
+        currentUser.PhoneNumberConfirmed = true;
+        var result = await UserManager.UpdateAsync(currentUser);
+        if (result.Succeeded)
+        {
+            editModel.PhoneNumber = phone;
+            phoneCodeInput = string.Empty;
+            phoneCodeHint = null;
+            Ok("Phone confirmed successfully.");
+        }
+        else
+        {
+            (currentUser.PhoneNumber, currentUser.PhoneNumberConfirmed) = previous;
+            Fail(string.Join(" ", result.Errors.Select(e => e.Description)));
+        }
     }
 
     private string ShortEndpoint(string endpoint)
@@ -359,29 +433,29 @@ else
 
         if (channel == Reminders.Models.Enums.NotificationChannel.Email)
         {
-            if (!new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(value))
+            if (value.Length > 320 || !new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(value))
             {
-                successMessage = "Invalid email format.";
+                Fail("Invalid email format.");
                 return;
             }
         }
-        else
+        else if (!TryNormalizePhone(value, out value))
         {
-            if (value.StartsWith("00", StringComparison.Ordinal))
-                value = "+" + value[2..];
+            Fail("Invalid phone format. Use international format like +123456789 (or 00...).");
+            return;
+        }
 
-            // Basic E.164-like validation
-            if (!System.Text.RegularExpressions.Regex.IsMatch(value, "^\\+[1-9]\\d{7,14}$"))
-            {
-                successMessage = "Invalid phone format. Use international format like +123456789 (or 00...).";
-                return;
-            }
+        var label = string.IsNullOrWhiteSpace(newEndpointLabel) ? null : newEndpointLabel.Trim();
+        if (label is { Length: > 100 })
+        {
+            Fail("Label must be 100 characters or fewer.");
+            return;
         }
 
         var exists = Db.UserContactEndpoints.Any(x => x.UserId == currentUser.Id && x.Channel == channel && x.Value == value);
         if (exists)
         {
-            successMessage = "Endpoint already exists.";
+            Fail("Endpoint already exists.");
             return;
         }
 
@@ -390,10 +464,10 @@ else
             UserId = currentUser.Id,
             Channel = channel,
             Value = value,
-            Label = string.IsNullOrWhiteSpace(newEndpointLabel) ? null : newEndpointLabel.Trim(),
+            Label = label,
             IsConfirmed = false,
             VerificationToken = Guid.NewGuid().ToString("N"),
-            VerificationCode = Random.Shared.Next(100000, 999999).ToString(),
+            VerificationCode = NewCode(),
             VerificationExpiresAtUtc = DateTime.UtcNow.AddMinutes(30),
             CreatedAt = DateTime.UtcNow
         };
@@ -404,7 +478,7 @@ else
         contactEndpoints.Insert(0, ep);
         newEndpointValue = string.Empty;
         newEndpointLabel = string.Empty;
-        successMessage = "Endpoint added. Please confirm it before using it in reminders.";
+        Ok("Endpoint added. Please confirm it before using it in reminders.");
     }
 
     private async Task GenerateEndpointEmailLink(int id)
@@ -416,9 +490,14 @@ else
         ep.VerificationExpiresAtUtc = DateTime.UtcNow.AddMinutes(30);
         await Db.SaveChangesAsync();
 
-        endpointEmailLinks[id] = $"{Nav.BaseUri}confirm-contact-endpoint?endpointId={id}&token={ep.VerificationToken}";
-        await SendEmailAsync(ep.Value, "Confirm your additional Reminders endpoint", $"Please confirm this endpoint by opening this link: {endpointEmailLinks[id]}");
-        successMessage = "Endpoint confirmation email sent.";
+        var link = $"{Nav.BaseUri}confirm-contact-endpoint?endpointId={id}&token={ep.VerificationToken}";
+        var sent = await VerificationSender.SendEmailAsync(ep.Value, "Confirm your additional Reminders endpoint", $"Please confirm this endpoint by opening this link: {link}");
+
+        if (RevealSecrets) endpointEmailLinks[id] = link; else endpointEmailLinks.Remove(id);
+
+        if (sent) Ok($"Confirmation email sent to {ep.Value}.");
+        else if (RevealSecrets) Ok("Email delivery is not set up, so use Copy link to confirm (development only).");
+        else Fail("The confirmation email could not be sent. Email delivery is not set up on this server yet.");
     }
 
     private async Task GenerateEndpointPhoneCode(int id)
@@ -426,11 +505,15 @@ else
         var ep = Db.UserContactEndpoints.FirstOrDefault(x => x.Id == id && currentUser != null && x.UserId == currentUser.Id && x.Channel == Reminders.Models.Enums.NotificationChannel.SMS);
         if (ep == null) return;
 
-        ep.VerificationCode = Random.Shared.Next(100000, 999999).ToString();
+        ep.VerificationCode = NewCode();
         ep.VerificationExpiresAtUtc = DateTime.UtcNow.AddMinutes(30);
         await Db.SaveChangesAsync();
 
-        successMessage = $"Phone verification code (dev): {ep.VerificationCode}";
+        var sent = await VerificationSender.SendSmsAsync(ep.Value, $"Your Reminders confirmation code is {ep.VerificationCode}");
+
+        if (sent) Ok($"We sent a confirmation code by SMS to {ep.Value}.");
+        else if (RevealSecrets) Ok($"SMS delivery is not set up. Phone verification code (development only): {ep.VerificationCode}");
+        else Fail("The confirmation code could not be sent. SMS delivery is not set up on this server yet.");
     }
 
     private async Task ConfirmEndpointPhoneCode(int id)
@@ -439,9 +522,9 @@ else
         if (ep == null) return;
 
         endpointPhoneCodes.TryGetValue(id, out var input);
-        if (string.IsNullOrWhiteSpace(input) || string.IsNullOrWhiteSpace(ep.VerificationCode) || !string.Equals(input.Trim(), ep.VerificationCode, StringComparison.OrdinalIgnoreCase) || (ep.VerificationExpiresAtUtc.HasValue && ep.VerificationExpiresAtUtc.Value < DateTime.UtcNow))
+        if (string.IsNullOrWhiteSpace(input) || string.IsNullOrWhiteSpace(ep.VerificationCode) || !string.Equals(input.Trim(), ep.VerificationCode, StringComparison.Ordinal) || (ep.VerificationExpiresAtUtc.HasValue && ep.VerificationExpiresAtUtc.Value < DateTime.UtcNow))
         {
-            successMessage = "Invalid or expired phone verification code.";
+            Fail("Invalid or expired phone verification code.");
             return;
         }
 
@@ -453,6 +536,7 @@ else
         var inList = contactEndpoints.FirstOrDefault(x => x.Id == id);
         if (inList != null) inList.IsConfirmed = true;
         endpointPhoneCodes[id] = string.Empty;
+        Ok("Phone endpoint confirmed.");
     }
 
     private async Task CopyText(string value)
@@ -466,27 +550,6 @@ else
 
     private void SetEndpointPhoneCode(int id, string? code)
         => endpointPhoneCodes[id] = code ?? string.Empty;
-
-    private async Task SendEmailAsync(string to, string subject, string body)
-    {
-        var host = Config["Smtp:Host"];
-        var port = int.TryParse(Config["Smtp:Port"], out var p) ? p : 587;
-        var username = Config["Smtp:Username"];
-        var password = Config["Smtp:Password"];
-        var from = Config["Smtp:FromEmail"] ?? "noreply@localhost";
-
-        if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
-            return;
-
-        using var client = new System.Net.Mail.SmtpClient(host, port)
-        {
-            EnableSsl = true,
-            Credentials = new System.Net.NetworkCredential(username, password)
-        };
-
-        using var mail = new System.Net.Mail.MailMessage(from, to, subject, body);
-        await client.SendMailAsync(mail);
-    }
 
     private async Task RemoveEndpoint(int id)
     {
@@ -503,30 +566,72 @@ else
     {
         if (currentUser is null) return;
 
-        currentUser.DisplayName = editModel.DisplayName?.Trim();
-        currentUser.TimeZoneId = editModel.TimeZoneId;
-
-        if (!string.Equals(currentUser.Email, editModel.Email, StringComparison.OrdinalIgnoreCase))
+        var email = (editModel.Email ?? string.Empty).Trim();
+        if (email.Length == 0 || !new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(email))
         {
-            currentUser.Email = editModel.Email?.Trim();
-            currentUser.UserName = editModel.Email?.Trim();
-            currentUser.EmailConfirmed = false; // requires confirmation again
+            Fail("Please enter a valid email address.");
+            return;
         }
 
-        if (!string.Equals(currentUser.PhoneNumber, editModel.PhoneNumber, StringComparison.OrdinalIgnoreCase))
+        var phone = string.Empty;
+        if (!string.IsNullOrWhiteSpace(editModel.PhoneNumber) && !TryNormalizePhone(editModel.PhoneNumber, out phone))
         {
-            currentUser.PhoneNumber = editModel.PhoneNumber?.Trim();
+            Fail("Invalid phone format. Use international format like +123456789 (or 00...).");
+            return;
+        }
+
+        var emailChanged = !string.Equals(currentUser.Email, email, StringComparison.OrdinalIgnoreCase);
+        if (emailChanged)
+        {
+            var owner = await UserManager.FindByEmailAsync(email);
+            if (owner is not null && owner.Id != currentUser.Id)
+            {
+                Fail("That email address is already used by another account.");
+                return;
+            }
+        }
+
+        // Keep the old values so a rejected update doesn't leave the page showing unsaved changes.
+        var before = (currentUser.DisplayName, currentUser.TimeZoneId, currentUser.Email, currentUser.UserName, currentUser.EmailConfirmed, currentUser.PhoneNumber, currentUser.PhoneNumberConfirmed);
+
+        currentUser.DisplayName = string.IsNullOrWhiteSpace(editModel.DisplayName) ? null : editModel.DisplayName.Trim();
+        currentUser.TimeZoneId = TimeZoneOptions.Normalize(editModel.TimeZoneId);
+
+        if (emailChanged)
+        {
+            currentUser.Email = email;
+            currentUser.UserName = email;
+            currentUser.EmailConfirmed = false; // requires confirmation again
+            emailConfirmationLink = null;
+        }
+
+        var phoneChanged = !string.Equals(currentUser.PhoneNumber ?? string.Empty, phone, StringComparison.Ordinal);
+        if (phoneChanged)
+        {
+            currentUser.PhoneNumber = phone.Length == 0 ? null : phone;
             currentUser.PhoneNumberConfirmed = false; // requires confirmation again
+            phoneCodeHint = null;
         }
 
         var result = await UserManager.UpdateAsync(currentUser);
-        successMessage = result.Succeeded
-            ? "Profile saved. If you changed email/phone, confirmation is required before full use."
-            : string.Join("; ", result.Errors.Select(e => e.Description));
+        if (result.Succeeded)
+        {
+            editModel.Email = email;
+            editModel.PhoneNumber = phone;
+            Ok(emailChanged || phoneChanged
+                ? "Profile saved. Confirm your new email/phone before using it in reminders."
+                : "Profile saved.");
+        }
+        else
+        {
+            (currentUser.DisplayName, currentUser.TimeZoneId, currentUser.Email, currentUser.UserName, currentUser.EmailConfirmed, currentUser.PhoneNumber, currentUser.PhoneNumberConfirmed) = before;
+            Fail(string.Join(" ", result.Errors.Select(e => e.Description)));
+        }
     }
 
     private sealed class EditProfileModel
     {
+        [System.ComponentModel.DataAnnotations.MaxLength(200)]
         public string DisplayName { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
         public string PhoneNumber { get; set; } = string.Empty;

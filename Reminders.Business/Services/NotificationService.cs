@@ -45,89 +45,82 @@ public class NotificationService : INotificationService
         if (targets.Count == 0)
         {
             _logger.LogWarning("No selected targets for reminder {ReminderId} channel {Channel}", reminder.Id, channel);
-            await RecordNotificationResultAsync(reminder, channel, NotificationStatus.Failed, null, user);
+            await RecordNotificationResultAsync(reminder, channel, NotificationStatus.Failed, null);
             return;
         }
 
-        var withinQuota = await _subscriptionService.IsChannelWithinQuotaAsync(user, channel);
-        if (!withinQuota)
+        if (channel == NotificationChannel.Push)
         {
-            _logger.LogWarning("Quota exceeded for user {UserId} channel {Channel}", user.Id, channel);
-            await RecordNotificationResultAsync(reminder, channel, NotificationStatus.Failed, null, user);
+            var deviceTypes = await _db.PushSubscriptions
+                .AsNoTracking()
+                .Where(x => x.UserId == user.Id && targets.Contains(x.Endpoint))
+                .Select(x => x.DeviceType)
+                .Distinct()
+                .ToListAsync();
+
+            var named = deviceTypes.Where(x => !string.IsNullOrWhiteSpace(x)).OrderBy(x => x).ToList();
+            var deviceTypeSnapshot = named.Count == 0 ? "Unknown" : string.Join(", ", named);
+            if (deviceTypeSnapshot.Length > 80) deviceTypeSnapshot = deviceTypeSnapshot[..80];
+
+            await SendOneAsync(reminder, channel, deviceTypeSnapshot, async () =>
+            {
+                var delivered = await _push.SendAsync(user, reminder, targets);
+                if (delivered == 0)
+                    throw new InvalidOperationException("Push could not be delivered to any selected device.");
+            });
             return;
         }
 
+        // One record per target, and one failing target must not stop the others.
+        foreach (var target in targets)
+        {
+            // Re-check per target so a reminder with several phone numbers can't overshoot the monthly quota.
+            if (channel is NotificationChannel.SMS or NotificationChannel.Voice
+                && !await _subscriptionService.IsChannelWithinQuotaAsync(user, channel))
+            {
+                _logger.LogWarning("Quota exceeded for user {UserId} channel {Channel}", user.Id, channel);
+                await RecordNotificationResultAsync(reminder, channel, NotificationStatus.Failed, null);
+                continue;
+            }
+
+            await SendOneAsync(reminder, channel, null, () => channel switch
+            {
+                NotificationChannel.Email => _email.SendAsync(CloneForEmail(user, target), reminder),
+                NotificationChannel.SMS => _sms.SendAsync(CloneForPhone(user, target), reminder),
+                NotificationChannel.Voice => _voice.SendAsync(CloneForPhone(user, target), reminder),
+                _ => Task.CompletedTask
+            });
+        }
+    }
+
+    private async Task SendOneAsync(Reminder reminder, NotificationChannel channel, string? deviceType, Func<Task> send)
+    {
         try
         {
-            switch (channel)
-            {
-                case NotificationChannel.Email:
-                {
-                    foreach (var emailTarget in targets)
-                    {
-                        var targetUser = CloneForEmail(user, emailTarget);
-                        await _email.SendAsync(targetUser, reminder);
-                        await RecordNotificationResultAsync(reminder, channel, NotificationStatus.Sent, null, targetUser);
-                    }
-                    break;
-                }
-                case NotificationChannel.SMS:
-                {
-                    foreach (var phoneTarget in targets)
-                    {
-                        var targetUser = CloneForPhone(user, phoneTarget);
-                        await _sms.SendAsync(targetUser, reminder);
-                        await RecordNotificationResultAsync(reminder, channel, NotificationStatus.Sent, null, targetUser);
-                    }
-                    break;
-                }
-                case NotificationChannel.Voice:
-                {
-                    foreach (var phoneTarget in targets)
-                    {
-                        var targetUser = CloneForPhone(user, phoneTarget);
-                        await _voice.SendAsync(targetUser, reminder);
-                        await RecordNotificationResultAsync(reminder, channel, NotificationStatus.Sent, null, targetUser);
-                    }
-                    break;
-                }
-                case NotificationChannel.Push:
-                {
-                    var deviceTypes = await _db.PushSubscriptions
-                        .AsNoTracking()
-                        .Where(x => x.UserId == user.Id && targets.Contains(x.Endpoint))
-                        .Select(x => x.DeviceType)
-                        .Distinct()
-                        .ToListAsync();
-
-                    var deviceTypeSnapshot = deviceTypes.Count == 0
-                        ? "Unknown"
-                        : string.Join(", ", deviceTypes.Where(x => !string.IsNullOrWhiteSpace(x)).OrderBy(x => x));
-
-                    await _push.SendAsync(user, reminder, targets);
-                    await RecordNotificationResultAsync(reminder, channel, NotificationStatus.Sent, deviceTypeSnapshot, user);
-                    break;
-                }
-            }
+            await send();
+            await RecordNotificationResultAsync(reminder, channel, NotificationStatus.Sent, deviceType);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to dispatch {Channel} notification for reminder {ReminderId}", channel, reminder.Id);
-            await RecordNotificationResultAsync(reminder, channel, NotificationStatus.Failed, null, user);
+            await RecordNotificationResultAsync(reminder, channel, NotificationStatus.Failed, deviceType);
         }
     }
 
-    private async Task RecordNotificationResultAsync(Reminder reminder, NotificationChannel channel, NotificationStatus status, string? deviceType, AppUser user)
+    private async Task RecordNotificationResultAsync(Reminder reminder, NotificationChannel channel, NotificationStatus status, string? deviceType)
     {
+        var snapshot = string.IsNullOrWhiteSpace(reminder.Description)
+            ? reminder.Name
+            : $"{reminder.Name}: {reminder.Description}";
+        if (snapshot.Length > 2000) snapshot = snapshot[..2000];
+
         var notification = new ReminderNotification
         {
             ReminderId = reminder.Id,
             Channel = channel,
             Status = status,
             ReminderName = reminder.Name,
-            MessageSnapshot = string.IsNullOrWhiteSpace(reminder.Description)
-                ? reminder.Name
-                : $"{reminder.Name}: {reminder.Description}",
+            MessageSnapshot = snapshot,
             TimeZoneId = reminder.TimeZoneId,
             DeviceType = deviceType,
             ScheduledForUtc = reminder.OccursAt,

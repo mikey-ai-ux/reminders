@@ -4,6 +4,7 @@
 @inject UserManager<AppUser> UserManager
 @inject ISubscriptionService SubSvc
 @inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Nav
 @rendermode InteractiveServer
 
 <PageTitle>Subscription — Reminders</PageTitle>
@@ -11,12 +12,25 @@
 <div class="tab-content card">
     <h2>Subscription Management</h2>
 
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <div class="alert alert-error" role="alert">@errorMessage</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(infoMessage))
+    {
+        <div class="alert alert-success">@infoMessage</div>
+    }
+    @if (!SubSvc.IsBillingConfigured)
+    {
+        <div class="alert alert-info">Online payments are not set up on this server yet, so plans can't be changed here.</div>
+    }
+
     <div class="current-plan">
         <div class="plan-info">
             <span class="tier-badge-lg tier-@(currentUser?.SubscriptionTier.ToString().ToLower())">
-                @currentUser?.SubscriptionTier Plan
+                @CurrentPlanName Plan
             </span>
-            @if (currentUser?.SubscriptionExpiresAt != null)
+            @if (currentUser?.SubscriptionExpiresAt != null && IsPaid)
             {
                 <p class="expiry">Renews @currentUser.SubscriptionExpiresAt.Value.ToString("MMMM d, yyyy")</p>
             }
@@ -26,27 +40,35 @@
     <div class="plans-grid">
         @foreach (var p in plans)
         {
+            var isCurrent = currentPlan?.Id == p.Id;
             <div class="plan-card @(p.Highlight ? "highlight" : "")">
                 <h3>@p.Name</h3>
-                <div class="price">$@p.Price<span>/month</span></div>
+                <div class="price">$@p.Price.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)<span>/month</span></div>
                 <ul>
+                    <li>Unlimited reminders</li>
                     <li>Email + Push included</li>
-                    <li>@p.SmsLimit SMS / month</li>
-                    <li>@p.VoiceLimit voice calls / month</li>
+                    <li>@p.SmsLimit.ToString("N0") SMS / month</li>
+                    <li>@p.VoiceLimit.ToString("N0") voice calls / month</li>
                 </ul>
-                <button class="btn btn-primary" @onclick="() => Upgrade(p.Id)">Choose @p.Name</button>
+                @if (isCurrent)
+                {
+                    <button class="btn btn-secondary" disabled>Current plan</button>
+                }
+                else
+                {
+                    <button class="btn btn-primary" @onclick="() => Upgrade(p.Id)" disabled="@(busy || !SubSvc.IsBillingConfigured)">Choose @p.Name</button>
+                }
             </div>
         }
     </div>
 
-    @if (currentUser?.SubscriptionTier != Reminders.Models.Enums.SubscriptionTier.Free)
+    @if (IsPaid)
     {
         <div class="manage-sub">
-            <button class="btn btn-secondary" @onclick="CancelSubscription">Cancel Subscription</button>
+            <button class="btn btn-secondary" @onclick="ManageBilling" disabled="@(busy || !SubSvc.IsBillingConfigured)">Manage or cancel subscription</button>
         </div>
     }
 </div>
-
 <style>
 .current-plan { display: flex; align-items: center; margin-bottom: 1.5rem; }
 .tier-badge-lg { font-size: 0.9rem; font-weight: 700; padding: 5px 14px; border-radius: 20px; }
@@ -65,6 +87,19 @@
 
 @code {
     private AppUser? currentUser;
+    private SubscriptionPlan? currentPlan;
+    private string? errorMessage;
+    private string? infoMessage;
+    private bool busy;
+
+    [SupplyParameterFromQuery(Name = "success")]
+    public string? Success { get; set; }
+
+    [SupplyParameterFromQuery(Name = "cancelled")]
+    public string? Cancelled { get; set; }
+
+    private bool IsPaid => currentUser is not null && currentUser.SubscriptionTier != Reminders.Models.Enums.SubscriptionTier.Free;
+    private string CurrentPlanName => currentPlan?.Name ?? currentUser?.SubscriptionTier.ToString() ?? "Free";
 
     private readonly List<PlanOption> plans =
     [
@@ -77,22 +112,53 @@
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         currentUser = await UserManager.GetUserAsync(authState.User);
+        if (currentUser is not null)
+            currentPlan = await SubSvc.GetCurrentPlanAsync(currentUser);
+
+        if (Success == "true")
+            infoMessage = "Payment received. Your new plan becomes active as soon as the payment is confirmed, usually within a minute.";
+        else if (Cancelled == "true")
+            infoMessage = "Checkout was cancelled. Your plan has not changed.";
     }
 
-    async Task Upgrade(int planId)
+    private async Task Upgrade(int planId)
     {
-        if (currentUser == null) return;
-        var baseUrl = "https://localhost:5001";
-        var url = await SubSvc.CreateCheckoutSessionAsync(currentUser, planId, $"{baseUrl}/profile/subscription?success=true", $"{baseUrl}/profile/subscription?cancelled=true");
-        if (!string.IsNullOrEmpty(url))
+        if (currentUser == null || busy) return;
+        busy = true;
+        errorMessage = null;
+        try
         {
-            // TODO: navigate to stripe url client-side
+            var page = $"{Nav.BaseUri}profile/subscription";
+            var url = await SubSvc.CreateCheckoutSessionAsync(currentUser, planId, $"{page}?success=true", $"{page}?cancelled=true");
+            if (string.IsNullOrEmpty(url))
+                errorMessage = "Checkout could not be started. Please try again later.";
+            else
+                Nav.NavigateTo(url, forceLoad: true);
+        }
+        finally
+        {
+            busy = false;
         }
     }
 
-    void CancelSubscription()
+    // Cancelling, changing card and switching plan all happen in Stripe's billing portal.
+    private async Task ManageBilling()
     {
-        // TODO: Call Stripe to cancel subscription
+        if (currentUser == null || busy) return;
+        busy = true;
+        errorMessage = null;
+        try
+        {
+            var url = await SubSvc.CreateCustomerPortalSessionAsync(currentUser, $"{Nav.BaseUri}profile/subscription");
+            if (string.IsNullOrEmpty(url))
+                errorMessage = "The billing portal could not be opened. Please try again later.";
+            else
+                Nav.NavigateTo(url, forceLoad: true);
+        }
+        finally
+        {
+            busy = false;
+        }
     }
 
     private sealed class PlanOption

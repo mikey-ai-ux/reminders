@@ -339,6 +339,9 @@ namespace Reminders.Data.Migrations
                     b.Property<DateTime>("OccursAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<int?>("RecurrenceAnchorDay")
+                        .HasColumnType("int");
+
                     b.Property<string>("RecurringInterval")
                         .IsRequired()
                         .ValueGeneratedOnAdd()

@@ -36,20 +36,42 @@ builder.Services.ConfigureApplicationCookie(options =>
 });
 
 // ── External OAuth ────────────────────────────────────────────────────────────
-builder.Services.AddAuthentication()
-    .AddGoogle(options =>
+// Providers are only registered once real credentials are configured, so the login page
+// never offers a button that leads to a provider error page.
+var externalAuth = new ExternalAuthProviders();
+var authBuilder = builder.Services.AddAuthentication();
+
+static bool IsConfigured(string? value) =>
+    !string.IsNullOrWhiteSpace(value) && !value.Contains("YOUR_", StringComparison.OrdinalIgnoreCase) && value != "placeholder";
+
+var googleId = builder.Configuration["Authentication:Google:ClientId"];
+var googleSecret = builder.Configuration["Authentication:Google:ClientSecret"];
+if (IsConfigured(googleId) && IsConfigured(googleSecret))
+{
+    authBuilder.AddGoogle(options =>
     {
-        options.ClientId = builder.Configuration["Authentication:Google:ClientId"] ?? "placeholder";
-        options.ClientSecret = builder.Configuration["Authentication:Google:ClientSecret"] ?? "placeholder";
-    })
-    .AddOAuth("Apple", options =>
+        options.ClientId = googleId!;
+        options.ClientSecret = googleSecret!;
+    });
+    externalAuth.Names.Add("Google");
+}
+
+var appleId = builder.Configuration["Authentication:Apple:ClientId"];
+var appleSecret = builder.Configuration["Authentication:Apple:ClientSecret"];
+if (IsConfigured(appleId) && IsConfigured(appleSecret))
+{
+    authBuilder.AddOAuth("Apple", options =>
     {
-        options.ClientId = builder.Configuration["Authentication:Apple:ClientId"] ?? "placeholder";
-        options.ClientSecret = builder.Configuration["Authentication:Apple:ClientSecret"] ?? "placeholder";
+        options.ClientId = appleId!;
+        options.ClientSecret = appleSecret!;
         options.AuthorizationEndpoint = "https://appleid.apple.com/auth/authorize";
         options.TokenEndpoint = "https://appleid.apple.com/auth/token";
         options.CallbackPath = "/signin-apple";
     });
+    externalAuth.Names.Add("Apple");
+}
+
+builder.Services.AddSingleton(externalAuth);
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("Smtp"));
@@ -65,6 +87,7 @@ builder.Services.AddScoped<IEmailNotificationSender, EmailNotificationSender>();
 builder.Services.AddScoped<ISmsNotificationSender, SmsNotificationSender>();
 builder.Services.AddScoped<IVoiceNotificationSender, VoiceNotificationSender>();
 builder.Services.AddScoped<IPushNotificationSender, PushNotificationSender>();
+builder.Services.AddScoped<IVerificationSender, VerificationSender>();
 builder.Services.AddHostedService<ReminderScheduler>();
 
 // ── MVC Controllers ───────────────────────────────────────────────────────────
@@ -99,32 +122,24 @@ app.MapControllers();
 app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Account}/{action=Login}/{id?}");
-app.MapGet("/login", () => Results.Redirect("/account/login"));
+// /login is the one public login URL; the form itself is the server-rendered MVC view.
+app.MapGet("/login", (HttpContext http) => Results.Redirect("/account/login" + http.Request.QueryString));
 
-app.MapPost("/login-local", async (HttpContext http, SignInManager<AppUser> signInManager) =>
+// Only ever redirect back into this site.
+static string SafeLocalUrl(string? url, string fallback) =>
+    !string.IsNullOrWhiteSpace(url) && url.StartsWith('/') && !url.StartsWith("//") && !url.StartsWith("/\\")
+        ? url
+        : fallback;
+
+app.MapGet("/challenge/{provider}", (string provider, string? returnUrl, ExternalAuthProviders providers) =>
 {
-    var form = await http.Request.ReadFormAsync();
-    var email = form["email"].ToString();
-    var password = form["password"].ToString();
-    var remember = string.Equals(form["rememberMe"], "true", StringComparison.OrdinalIgnoreCase);
-    var returnUrl = form["returnUrl"].ToString();
-    if (string.IsNullOrWhiteSpace(returnUrl)) returnUrl = "/reminders";
+    var name = providers.Names.FirstOrDefault(n => string.Equals(n, provider, StringComparison.OrdinalIgnoreCase));
+    if (name is null)
+        return Results.Redirect("/login?error=" + Uri.EscapeDataString($"{provider} sign-in is not available."));
 
-    if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
-        return Results.Redirect("/login?error=Email%20and%20password%20are%20required.");
-
-    var result = await signInManager.PasswordSignInAsync(email.Trim(), password, remember, lockoutOnFailure: false);
-    if (!result.Succeeded)
-        return Results.Redirect("/login?error=Invalid%20email%20or%20password.");
-
-    return Results.Redirect(returnUrl);
-});
-
-app.MapGet("/challenge/{provider}", (string provider, string? returnUrl) =>
-{
-    var redirect = $"/externallogin-callback?returnUrl={Uri.EscapeDataString(returnUrl ?? "/")}";
+    var redirect = $"/externallogin-callback?returnUrl={Uri.EscapeDataString(SafeLocalUrl(returnUrl, "/reminders"))}";
     var props = new AuthenticationProperties { RedirectUri = redirect };
-    return Results.Challenge(props, [provider]);
+    return Results.Challenge(props, [name]);
 });
 
 app.MapGet("/externallogin-callback", async (
@@ -132,13 +147,14 @@ app.MapGet("/externallogin-callback", async (
     UserManager<AppUser> userManager,
     string? returnUrl) =>
 {
+    returnUrl = SafeLocalUrl(returnUrl, "/reminders");
     var info = await signInManager.GetExternalLoginInfoAsync();
     if (info is null)
-        return Results.Redirect("/login?error=ExternalLoginFailed");
+        return Results.Redirect("/login?error=" + Uri.EscapeDataString("External sign-in failed. Please try again."));
 
     var signInResult = await signInManager.ExternalLoginSignInAsync(info.LoginProvider, info.ProviderKey, isPersistent: false, bypassTwoFactor: true);
     if (signInResult.Succeeded)
-        return Results.Redirect(returnUrl ?? "/reminders");
+        return Results.Redirect(returnUrl);
 
     var email = info.Principal.FindFirstValue(ClaimTypes.Email)
                ?? info.Principal.FindFirstValue("email")
@@ -162,15 +178,15 @@ app.MapGet("/externallogin-callback", async (
 
         var create = await userManager.CreateAsync(user);
         if (!create.Succeeded)
-            return Results.Redirect("/login?error=AccountCreateFailed");
+            return Results.Redirect("/login?error=" + Uri.EscapeDataString("Could not create an account for this sign-in."));
     }
 
     var addLogin = await userManager.AddLoginAsync(user, info);
     if (!addLogin.Succeeded && addLogin.Errors.Any(e => e.Code != "LoginAlreadyAssociated"))
-        return Results.Redirect("/login?error=ExternalLinkFailed");
+        return Results.Redirect("/login?error=" + Uri.EscapeDataString("Could not link this sign-in to your account."));
 
     await signInManager.SignInAsync(user, isPersistent: false);
-    return Results.Redirect(returnUrl ?? "/reminders");
+    return Results.Redirect(returnUrl);
 });
 
 app.MapGet("/confirm-email", async (UserManager<AppUser> userManager, string userId, string code) =>
@@ -219,3 +235,12 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
 app.Run();
+
+/// <summary>Names of the external sign-in providers that have real credentials configured.</summary>
+public sealed class ExternalAuthProviders
+{
+    public List<string> Names { get; } = [];
+}
+
+// Lets the test project host the app.
+public partial class Program { }

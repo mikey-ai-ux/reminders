@@ -34,8 +34,17 @@ public class SubscriptionService : ISubscriptionService
         _db = db;
         _userManager = userManager;
         _logger = logger;
-        StripeConfiguration.ApiKey = _stripeSettings.SecretKey;
+        if (IsBillingConfigured)
+            StripeConfiguration.ApiKey = _stripeSettings.SecretKey;
     }
+
+    public bool IsBillingConfigured => LooksConfigured(_stripeSettings.SecretKey, "sk_");
+
+    private static bool LooksConfigured(string? value, string prefix) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.StartsWith(prefix, StringComparison.Ordinal)
+        && !value.Contains("YOUR", StringComparison.OrdinalIgnoreCase)
+        && !value.Contains("...", StringComparison.Ordinal);
 
     public bool IsChannelAllowed(AppUser user, NotificationChannel channel)
     {
@@ -85,6 +94,12 @@ public class SubscriptionService : ISubscriptionService
 
     public async Task<string?> CreateCheckoutSessionAsync(AppUser user, int planId, string successUrl, string cancelUrl)
     {
+        if (!IsBillingConfigured)
+        {
+            _logger.LogWarning("Stripe is not configured; cannot start checkout for plan {PlanId}", planId);
+            return null;
+        }
+
         try
         {
             var plan = await _db.SubscriptionPlans.AsNoTracking().FirstOrDefaultAsync(p => p.Id == planId);
@@ -96,7 +111,7 @@ public class SubscriptionService : ISubscriptionService
                 priceId = _stripeSettings.ProPlanPriceId;
             }
 
-            if (string.IsNullOrWhiteSpace(priceId))
+            if (!LooksConfigured(priceId, "price_"))
             {
                 _logger.LogWarning("Stripe price id not configured for plan {PlanId}", planId);
                 return null;
@@ -113,7 +128,6 @@ public class SubscriptionService : ISubscriptionService
                         Quantity = 1
                     }
                 ],
-                CustomerEmail = user.Email,
                 SuccessUrl = successUrl,
                 CancelUrl = cancelUrl,
                 Metadata = new Dictionary<string, string>
@@ -123,8 +137,11 @@ public class SubscriptionService : ISubscriptionService
                 }
             };
 
+            // Stripe rejects a session that sets both Customer and CustomerEmail.
             if (!string.IsNullOrWhiteSpace(user.StripeCustomerId))
                 options.Customer = user.StripeCustomerId;
+            else
+                options.CustomerEmail = user.Email;
 
             var service = new SessionService();
             var session = await service.CreateAsync(options);
@@ -140,6 +157,8 @@ public class SubscriptionService : ISubscriptionService
 
     public async Task<string?> CreateCustomerPortalSessionAsync(AppUser user, string returnUrl)
     {
+        if (!IsBillingConfigured) return null;
+
         try
         {
             if (string.IsNullOrWhiteSpace(user.StripeCustomerId))
@@ -194,7 +213,14 @@ public class SubscriptionService : ISubscriptionService
                 user.StripeCustomerId = session.CustomerId;
 
                 if (int.TryParse(planIdRaw, out var parsedPlanId))
-                    user.SubscriptionPlanId = parsedPlanId;
+                {
+                    var plan = await _db.SubscriptionPlans.AsNoTracking().FirstOrDefaultAsync(p => p.Id == parsedPlanId);
+                    if (plan != null)
+                    {
+                        user.SubscriptionPlanId = plan.Id;
+                        user.SubscriptionTier = TierForPlan(plan);
+                    }
+                }
 
                 await _userManager.UpdateAsync(user);
                 _logger.LogInformation("Linked Stripe customer and plan for user {UserId}", userId);
@@ -208,8 +234,35 @@ public class SubscriptionService : ISubscriptionService
                 var user = await FindUserByStripeCustomerId(sub.CustomerId);
                 if (user == null) break;
                 user.StripeSubscriptionId = sub.Id;
-                user.SubscriptionTier = sub.Status is "active" or "trialing" ? SubscriptionTier.Pro : SubscriptionTier.Free;
                 user.SubscriptionExpiresAt = sub.CurrentPeriodEnd;
+
+                if (sub.Status is "active" or "trialing")
+                {
+                    // The plan can change from the billing portal, so trust the subscribed price over what we stored at checkout.
+                    var priceId = sub.Items?.Data?.FirstOrDefault()?.Price?.Id;
+                    var plan = string.IsNullOrWhiteSpace(priceId)
+                        ? null
+                        : await _db.SubscriptionPlans.AsNoTracking().FirstOrDefaultAsync(p => p.StripePriceId == priceId);
+                    plan ??= user.SubscriptionPlanId.HasValue
+                        ? await _db.SubscriptionPlans.AsNoTracking().FirstOrDefaultAsync(p => p.Id == user.SubscriptionPlanId.Value)
+                        : null;
+
+                    if (plan != null && plan.Price > 0)
+                    {
+                        user.SubscriptionPlanId = plan.Id;
+                        user.SubscriptionTier = TierForPlan(plan);
+                    }
+                    else
+                    {
+                        user.SubscriptionTier = SubscriptionTier.Pro;
+                    }
+                }
+                else
+                {
+                    user.SubscriptionTier = SubscriptionTier.Free;
+                    user.SubscriptionPlanId = 1;
+                }
+
                 await _userManager.UpdateAsync(user);
                 break;
             }
@@ -235,6 +288,53 @@ public class SubscriptionService : ISubscriptionService
             }
         }
     }
+
+    public async Task<List<PaymentRecord>> GetPaymentHistoryAsync(AppUser user)
+    {
+        if (!IsBillingConfigured || string.IsNullOrWhiteSpace(user.StripeCustomerId))
+            return [];
+
+        try
+        {
+            var invoices = await new InvoiceService().ListAsync(new InvoiceListOptions
+            {
+                Customer = user.StripeCustomerId,
+                Limit = 50
+            });
+
+            return invoices.Data
+                .Select(i => new PaymentRecord(
+                    i.Created,
+                    i.Lines?.Data?.FirstOrDefault()?.Description ?? i.Number ?? "Subscription",
+                    (i.Status == "paid" ? i.AmountPaid : i.AmountDue) / 100m,
+                    (i.Currency ?? "usd").ToUpperInvariant(),
+                    i.Status switch
+                    {
+                        "paid" => "Paid",
+                        "open" or "draft" => "Pending",
+                        _ => "Failed"
+                    },
+                    i.HostedInvoiceUrl))
+                .OrderByDescending(p => p.Date)
+                .ToList();
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe error loading invoices for user {UserId}", user.Id);
+            return [];
+        }
+    }
+
+    public async Task<SubscriptionPlan?> GetCurrentPlanAsync(AppUser user) => await GetEffectivePlanAsync(user);
+
+    private static SubscriptionTier TierForPlan(SubscriptionPlan plan) => plan.Name switch
+    {
+        "Free" => SubscriptionTier.Free,
+        "Starter" => SubscriptionTier.Pro,
+        "Growth" => SubscriptionTier.Business,
+        "Scale" => SubscriptionTier.Enterprise,
+        _ => plan.Price > 0 ? SubscriptionTier.Pro : SubscriptionTier.Free
+    };
 
     public async Task<int> GetCurrentMonthUsageAsync(string userId)
     {

@@ -7,23 +7,30 @@ namespace Reminders.Business.Services;
 
 public class ReminderService : IReminderService
 {
+    public const int FreeReminderLimit = 10;
+
     private readonly AppDbContext _db;
 
     public ReminderService(AppDbContext db) => _db = db;
 
+    // Reads are untracked: the scheduler changes reminders from another DbContext, and a tracked
+    // copy held by a long-lived Blazor circuit would keep showing (and saving) stale values.
     public async Task<List<Reminder>> GetUserRemindersAsync(string userId) =>
         await _db.Reminders
+            .AsNoTracking()
             .Include(r => r.Channels)
             .Include(r => r.Targets)
-            .Include(r => r.Notifications)
             .Where(r => r.UserId == userId)
             .OrderByDescending(r => r.CreatedAt)
+            .AsSplitQuery()
             .ToListAsync();
 
     public async Task<Reminder?> GetByIdAsync(int id, string userId) =>
         await _db.Reminders
+            .AsNoTracking()
             .Include(r => r.Channels)
             .Include(r => r.Targets)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(r => r.Id == id && r.UserId == userId);
 
     public async Task<Reminder> CreateAsync(Reminder reminder)
@@ -32,14 +39,20 @@ public class ReminderService : IReminderService
         if (user != null && user.SubscriptionTier == Reminders.Models.Enums.SubscriptionTier.Free)
         {
             var currentCount = await _db.Reminders.CountAsync(r => r.UserId == reminder.UserId);
-            if (currentCount >= 10)
-                throw new InvalidOperationException("Free plan allows up to 10 reminders. Upgrade to Pro for unlimited reminders.");
+            if (currentCount >= FreeReminderLimit)
+                throw new InvalidOperationException($"Free plan allows up to {FreeReminderLimit} reminders. Upgrade to a paid plan for unlimited reminders.");
         }
 
+        Normalize(reminder);
         await ValidateChannelsAndTargetsAsync(reminder, user);
 
-        reminder.CreatedAt = DateTime.UtcNow;
-        reminder.UpdatedAt = DateTime.UtcNow;
+        var now = DateTime.UtcNow;
+        reminder.Id = 0;
+        reminder.IsPaused = false;
+        reminder.LastNotifiedAt = null;
+        ApplySchedule(reminder, now);
+        reminder.CreatedAt = now;
+        reminder.UpdatedAt = now;
         _db.Reminders.Add(reminder);
         await _db.SaveChangesAsync();
         return reminder;
@@ -48,16 +61,36 @@ public class ReminderService : IReminderService
     public async Task<Reminder> UpdateAsync(Reminder reminder)
     {
         var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == reminder.UserId);
+
+        // Validate before touching the stored row, so a rejected edit leaves nothing half-applied.
+        Normalize(reminder);
         await ValidateChannelsAndTargetsAsync(reminder, user);
 
-        // If reminder is scheduled in the future, keep it active.
-        if (reminder.OccursAt > DateTime.UtcNow)
-            reminder.IsActive = true;
+        var existing = await LoadFreshAsync(reminder.Id, reminder.UserId)
+            ?? throw new InvalidOperationException("Reminder not found.");
 
-        reminder.UpdatedAt = DateTime.UtcNow;
-        _db.Reminders.Update(reminder);
+        var now = DateTime.UtcNow;
+        existing.Name = reminder.Name;
+        existing.Description = reminder.Description;
+        existing.Icon = reminder.Icon;
+        existing.CustomIconUrl = reminder.CustomIconUrl;
+        existing.OccursAt = reminder.OccursAt;
+        existing.TimeZoneId = reminder.TimeZoneId;
+        existing.RecurringInterval = reminder.RecurringInterval;
+        existing.RecurrenceAnchorDay = reminder.RecurrenceAnchorDay;
+        ApplySchedule(existing, now);
+        existing.UpdatedAt = now;
+
+        _db.ReminderChannels.RemoveRange(await _db.ReminderChannels.Where(c => c.ReminderId == existing.Id).ToListAsync());
+        _db.ReminderTargets.RemoveRange(await _db.ReminderTargets.Where(t => t.ReminderId == existing.Id).ToListAsync());
+
+        foreach (var c in reminder.Channels)
+            _db.ReminderChannels.Add(new ReminderChannel { ReminderId = existing.Id, Channel = c.Channel });
+        foreach (var t in reminder.Targets)
+            _db.ReminderTargets.Add(new ReminderTarget { ReminderId = existing.Id, Channel = t.Channel, TargetType = t.TargetType, TargetValue = t.TargetValue, Label = t.Label });
+
         await _db.SaveChangesAsync();
-        return reminder;
+        return existing;
     }
 
     public async Task<bool> DeleteAsync(int id, string userId)
@@ -71,7 +104,7 @@ public class ReminderService : IReminderService
 
     public async Task<bool> PauseAsync(int id, string userId)
     {
-        var r = await _db.Reminders.FirstOrDefaultAsync(x => x.Id == id && x.UserId == userId);
+        var r = await LoadFreshAsync(id, userId);
         if (r == null) return false;
         r.IsPaused = true;
         r.UpdatedAt = DateTime.UtcNow;
@@ -81,14 +114,125 @@ public class ReminderService : IReminderService
 
     public async Task<bool> ResumeAsync(int id, string userId)
     {
-        var r = await _db.Reminders.FirstOrDefaultAsync(x => x.Id == id && x.UserId == userId);
+        var r = await LoadFreshAsync(id, userId);
         if (r == null) return false;
         r.IsPaused = false;
-        if (r.OccursAt > DateTime.UtcNow)
-            r.IsActive = true;
+        ApplySchedule(r, DateTime.UtcNow);
         r.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return true;
+    }
+
+    private async Task<Reminder?> LoadFreshAsync(int id, string userId)
+    {
+        var r = await _db.Reminders.FirstOrDefaultAsync(x => x.Id == id && x.UserId == userId);
+        // The context may already track this row with values the scheduler has since changed.
+        if (r != null) await _db.Entry(r).ReloadAsync();
+        return r;
+    }
+
+    /// <summary>
+    /// Decides whether the reminder is live. A recurring reminder whose time has passed moves to its
+    /// next occurrence instead of firing straight away; a one-time reminder in the past is inactive.
+    /// </summary>
+    private static void ApplySchedule(Reminder reminder, DateTime now)
+    {
+        var after = now;
+        if (reminder.OccursAt > now)
+        {
+            // A custom-days reminder whose start date isn't one of its days begins on the next matching day.
+            var days = RecurrenceCalculator.ParseCustomDays(reminder.RecurringInterval);
+            var localDay = TimeZoneInfo.ConvertTimeFromUtc(reminder.OccursAt, RecurrenceCalculator.ResolveTimeZone(reminder.TimeZoneId)).DayOfWeek;
+            if (days.Count == 0 || days.Contains(localDay))
+            {
+                reminder.IsActive = true;
+                return;
+            }
+            after = reminder.OccursAt;
+        }
+
+        var next = RecurrenceCalculator.GetNextOccurrenceUtc(
+            reminder.OccursAt, reminder.RecurringInterval, reminder.TimeZoneId, after, reminder.RecurrenceAnchorDay);
+
+        if (next.HasValue)
+        {
+            reminder.OccursAt = next.Value;
+            reminder.IsActive = true;
+        }
+        else
+        {
+            reminder.IsActive = false;
+        }
+    }
+
+    private static void Normalize(Reminder reminder)
+    {
+        reminder.Name = (reminder.Name ?? string.Empty).Trim();
+        if (reminder.Name.Length == 0)
+            throw new InvalidOperationException("Reminder name is required.");
+        if (reminder.Name.Length > 200)
+            throw new InvalidOperationException("Reminder name must be 200 characters or fewer.");
+
+        reminder.Description = string.IsNullOrWhiteSpace(reminder.Description) ? null : reminder.Description.Trim();
+        reminder.Icon = string.IsNullOrWhiteSpace(reminder.Icon) ? "🔔" : reminder.Icon;
+        if (reminder.Icon.Length > 20)
+            throw new InvalidOperationException("Icon is too long.");
+
+        reminder.CustomIconUrl = string.IsNullOrWhiteSpace(reminder.CustomIconUrl) ? null : reminder.CustomIconUrl.Trim();
+        if (reminder.CustomIconUrl != null)
+        {
+            var ok = reminder.CustomIconUrl.Length <= 1024
+                     && Uri.TryCreate(reminder.CustomIconUrl, UriKind.Absolute, out var uri)
+                     && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+            if (!ok)
+                throw new InvalidOperationException("Custom icon URL must be a valid absolute http/https URL.");
+        }
+
+        reminder.TimeZoneId = string.IsNullOrWhiteSpace(reminder.TimeZoneId) ? "UTC" : reminder.TimeZoneId;
+        try { TimeZoneInfo.FindSystemTimeZoneById(reminder.TimeZoneId); }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            throw new InvalidOperationException("Unknown timezone.");
+        }
+
+        reminder.RecurringInterval = string.IsNullOrWhiteSpace(reminder.RecurringInterval) ? RecurrenceCalculator.None : reminder.RecurringInterval;
+        if (reminder.RecurringInterval.StartsWith(RecurrenceCalculator.CustomPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var days = RecurrenceCalculator.ParseCustomDays(reminder.RecurringInterval);
+            if (days.Count == 0)
+                throw new InvalidOperationException("Pick at least one day for a custom-days reminder.");
+            reminder.RecurringInterval = RecurrenceCalculator.FormatCustomDays(days);
+        }
+        else if (!RecurrenceCalculator.IsSupported(reminder.RecurringInterval))
+        {
+            throw new InvalidOperationException("Unknown recurring interval.");
+        }
+
+        if (reminder.OccursAt == default)
+            throw new InvalidOperationException("Date and time are required.");
+        reminder.OccursAt = DateTime.SpecifyKind(reminder.OccursAt, DateTimeKind.Utc);
+
+        if (reminder.RecurringInterval is RecurrenceCalculator.Monthly or RecurrenceCalculator.Annually)
+        {
+            reminder.RecurrenceAnchorDay ??= TimeZoneInfo
+                .ConvertTimeFromUtc(reminder.OccursAt, RecurrenceCalculator.ResolveTimeZone(reminder.TimeZoneId)).Day;
+        }
+        else
+        {
+            reminder.RecurrenceAnchorDay = null;
+        }
+
+        reminder.Channels = reminder.Channels
+            .GroupBy(c => c.Channel)
+            .Select(g => new ReminderChannel { Channel = g.Key })
+            .ToList();
+
+        reminder.Targets = reminder.Targets
+            .Where(t => !string.IsNullOrWhiteSpace(t.TargetValue))
+            .GroupBy(t => (t.Channel, Value: t.TargetValue.Trim().ToLowerInvariant()))
+            .Select(g => g.First())
+            .Select(t => new ReminderTarget { Channel = t.Channel, TargetType = t.TargetType, TargetValue = t.TargetValue.Trim(), Label = t.Label })
+            .ToList();
     }
 
     public async Task<List<ReminderNotification>> GetNotificationHistoryAsync(string userId)

@@ -2,7 +2,17 @@
 <div class="reminder-card @(Reminder.IsPaused ? "paused" : "") @(!Reminder.IsActive ? "inactive" : "")">
     <div class="card-header">
         <div class="card-title-row">
-            <h3 class="card-title"><span class="title-icon">@Reminder.Icon</span> @Reminder.Name</h3>
+            <h3 class="card-title">
+                @if (!string.IsNullOrWhiteSpace(Reminder.CustomIconUrl))
+                {
+                    <img class="title-icon-img" src="@Reminder.CustomIconUrl" alt="" loading="lazy" referrerpolicy="no-referrer" />
+                }
+                else
+                {
+                    <span class="title-icon">@Reminder.Icon</span>
+                }
+                @Reminder.Name
+            </h3>
             <span class="status-badge @(Reminder.IsPaused ? "badge-paused" : Reminder.IsActive ? "badge-active" : "badge-inactive")">
                 @(Reminder.IsPaused ? "Paused" : Reminder.IsActive ? "Active" : "Inactive")
             </span>
@@ -76,9 +86,11 @@
 .reminder-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; transition: box-shadow 0.2s; }
 .reminder-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
 .reminder-card.paused { opacity: 0.75; }
+.reminder-card .card-header { display: block; margin-bottom: 0; }
 .card-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
 .card-title { font-size: 1rem; font-weight: 700; color: var(--color-text); margin: 0; display:flex; align-items:center; gap:.4rem; }
 .title-icon { font-size: 1.1rem; }
+.title-icon-img { width: 1.3rem; height: 1.3rem; border-radius: 4px; object-fit: cover; }
 .card-desc { font-size: 0.85rem; color: var(--color-text-muted); margin: 0.25rem 0 0; }
 .status-badge { font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 20px; white-space: nowrap; flex-shrink: 0; }
 .badge-active { background: rgba(34,197,94,0.15); color: #22c55e; }
@@ -119,8 +131,9 @@
         if (string.IsNullOrWhiteSpace(Reminder.RecurringInterval) || Reminder.RecurringInterval == "None")
             return "One-time";
 
-        if (Reminder.RecurringInterval.StartsWith("Custom:", StringComparison.OrdinalIgnoreCase))
-            return "One-time";
+        var days = RecurrenceCalculator.ParseCustomDays(Reminder.RecurringInterval);
+        if (days.Count > 0)
+            return days.Count == 7 ? "Every day" : "Every " + string.Join(", ", days.OrderBy(d => ((int)d + 6) % 7).Select(d => d.ToString()[..3]));
 
         return Reminder.RecurringInterval;
     }

@@ -14,7 +14,10 @@ public class Reminder
     public string TimeZoneId { get; set; } = "UTC";
     public bool IsActive { get; set; } = true;
     public bool IsPaused { get; set; } = false;
-    public string RecurringInterval { get; set; } = "None"; // None, Daily, Weekly, Monthly
+    public string RecurringInterval { get; set; } = "None"; // None, Daily, Weekly, Monthly, Annually, Custom:<day numbers>
+
+    // Day of month the user picked for Monthly/Annually, so the 31st doesn't drift after shorter months.
+    public int? RecurrenceAnchorDay { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastNotifiedAt { get; set; }

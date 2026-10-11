@@ -18,14 +18,14 @@
         {
             <div class="usage-row">
                 <span class="badge badge-free">Free plan</span>
-                <span class="usage-text">@totalCount / 10 reminders used</span>
-                @if (totalCount >= 10)
+                <span class="usage-text">@totalCount / @FreeLimit reminders used</span>
+                @if (totalCount >= FreeLimit)
                 {
                     <span class="usage-limit">Limit reached</span>
                 }
             </div>
             <div class="slot-bar" aria-label="Reminder slots usage">
-                @for (var i = 1; i <= 10; i++)
+                @for (var i = 1; i <= FreeLimit; i++)
                 {
                     var cls = i <= totalCount
                         ? (i >= 10 ? "filled danger" : i >= 8 ? "filled warning" : "filled")
@@ -35,7 +35,7 @@
             </div>
         }
     </div>
-    <button class="btn btn-primary" @onclick="ShowNewForm" disabled="@(currentUser?.SubscriptionTier == SubscriptionTier.Free && totalCount >= 10)">+ New Reminder</button>
+    <button class="btn btn-primary" @onclick="ShowNewForm" disabled="@(currentUser?.SubscriptionTier == SubscriptionTier.Free && totalCount >= FreeLimit)">+ New Reminder</button>
 </div>
 
 @if (showForm)
@@ -145,6 +145,7 @@ else
     private bool showDeleteConfirm = false;
     private Reminder? pendingDeleteReminder;
 
+    private const int FreeLimit = ReminderService.FreeReminderLimit;
     private int totalCount => reminders.Count;
 
     protected override async Task OnInitializedAsync()
@@ -169,16 +170,20 @@ else
         if (currentUser != null) reminders = await ReminderSvc.GetUserRemindersAsync(currentUser.Id);
     }
 
+    // Reload after each change: resuming can move a recurring reminder to its next date,
+    // and the scheduler may have changed other reminders in the meantime.
     async Task PauseReminder(int id)
     {
-        if (currentUser != null) await ReminderSvc.PauseAsync(id, currentUser.Id);
-        reminders = reminders.Select(r => { if (r.Id == id) r.IsPaused = true; return r; }).ToList();
+        if (currentUser == null) return;
+        await ReminderSvc.PauseAsync(id, currentUser.Id);
+        reminders = await ReminderSvc.GetUserRemindersAsync(currentUser.Id);
     }
 
     async Task ResumeReminder(int id)
     {
-        if (currentUser != null) await ReminderSvc.ResumeAsync(id, currentUser.Id);
-        reminders = reminders.Select(r => { if (r.Id == id) { r.IsPaused = false; r.IsActive = true; } return r; }).ToList();
+        if (currentUser == null) return;
+        await ReminderSvc.ResumeAsync(id, currentUser.Id);
+        reminders = await ReminderSvc.GetUserRemindersAsync(currentUser.Id);
     }
 
     Task DeleteReminder(int id)

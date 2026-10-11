@@ -28,6 +28,11 @@ public class EmailNotificationSender : IEmailNotificationSender
             return;
         }
 
+        // Fail fast instead of opening a connection with placeholder credentials.
+        if (string.IsNullOrWhiteSpace(_settings.Host) || string.IsNullOrWhiteSpace(_settings.Password)
+            || _settings.Password.Contains("YOUR_", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Email delivery is not configured (Smtp settings).");
+
         var message = new MimeMessage();
         message.From.Add(new MailboxAddress(_settings.FromName, _settings.FromEmail));
         message.To.Add(new MailboxAddress(user.DisplayName ?? user.Email, user.Email));

@@ -13,4 +13,9 @@ public interface ISubscriptionService
     Task<string?> CreateCustomerPortalSessionAsync(AppUser user, string returnUrl);
     Task HandleStripeWebhookAsync(string payload, string signature);
     Task<int> GetCurrentMonthUsageAsync(string userId);
+
+    /// <summary>False while Stripe keys are still placeholders; checkout and the billing portal are unavailable then.</summary>
+    bool IsBillingConfigured { get; }
+    Task<SubscriptionPlan?> GetCurrentPlanAsync(AppUser user);
+    Task<List<PaymentRecord>> GetPaymentHistoryAsync(AppUser user);
 }
