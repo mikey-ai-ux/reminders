@@ -1,0 +1,12 @@
+@* Inline line icons (Lucide, ISC licence). One component so every icon shares size, stroke and colour. *@
+<svg class="icon @Class" width="@Size" height="@Size" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     stroke-width="@Stroke" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">@((MarkupString)Markup)</svg>
+
+@code {
+    [Parameter, EditorRequired] public string Name { get; set; } = "bell";
+    [Parameter] public int Size { get; set; } = 18;
+    [Parameter] public string Stroke { get; set; } = "2";
+    [Parameter] public string? Class { get; set; }
+
+    private string Markup => Icons.Markup(Name);
+}

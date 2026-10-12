@@ -18,4 +18,10 @@ public interface ISubscriptionService
     bool IsBillingConfigured { get; }
     Task<SubscriptionPlan?> GetCurrentPlanAsync(AppUser user);
     Task<List<PaymentRecord>> GetPaymentHistoryAsync(AppUser user);
+
+    /// <summary>
+    /// Cancels the user's paid subscription with the payment provider. Returns true when there is
+    /// nothing left to bill (including when the user never had one), false when it could not be cancelled.
+    /// </summary>
+    Task<bool> CancelSubscriptionAsync(AppUser user);
 }

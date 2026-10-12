@@ -2,38 +2,38 @@
 
 <nav class="navbar">
     <div class="navbar-brand">
-        <a href="/" class="brand-link"><span class="brand-badge">✉</span><span class="brand-text">Reminders</span></a>
+        <a href="/" class="brand-link"><span class="brand-badge"><Icon Name="bell-ring" Size="16" Stroke="2.4" /></span><span class="brand-text">Reminders</span></a>
     </div>
 
     <button class="nav-toggle" @onclick="ToggleMenu" aria-label="Toggle navigation" aria-expanded="@menuOpen">
-        <span></span><span></span><span></span>
+        <Icon Name="@(menuOpen ? "x" : "menu")" Size="22" />
     </button>
 
     <ul class="nav-links @(menuOpen ? "open" : "")" @onclick="CloseMenu">
-        <li><NavLink href="/" Match="NavLinkMatch.All" class="nav-link">Home</NavLink></li>
-
         <AuthorizeView>
             <Authorized>
-                <li><NavLink href="/reminders" class="nav-link">Reminders</NavLink></li>
-                <li><NavLink href="/history" class="nav-link">History</NavLink></li>
-                <li><NavLink href="/profile" class="nav-link">My Profile</NavLink></li>
-                <li><NavLink href="/profile/subscription" class="nav-link">Subscription</NavLink></li>
-                <li><NavLink href="/profile/payment-history" class="nav-link">Payments</NavLink></li>
+                <li><NavLink href="/reminders" class="nav-link"><Icon Name="bell" Size="16" /> Reminders</NavLink></li>
+                <li><NavLink href="/history" class="nav-link"><Icon Name="history" Size="16" /> History</NavLink></li>
+                <li><NavLink href="/profile" class="nav-link"><Icon Name="user" Size="16" /> Account</NavLink></li>
                 <li>
                     <form method="post" action="/logout">
                         <AntiforgeryToken />
-                        <button type="submit" class="nav-link btn-link">Logout</button>
+                        <button type="submit" class="nav-link btn-link"><Icon Name="log-out" Size="16" /> Logout</button>
                     </form>
                 </li>
             </Authorized>
             <NotAuthorized>
+                <li><NavLink href="/" Match="NavLinkMatch.All" class="nav-link">Home</NavLink></li>
                 <li><NavLink href="/login" class="nav-link btn-auth-login">Login</NavLink></li>
                 <li><NavLink href="/register" class="nav-link btn-primary-nav btn-auth-signup">Sign Up</NavLink></li>
             </NotAuthorized>
         </AuthorizeView>
 
         <li>
-            <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">🌙</button>
+            <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle light and dark theme" title="Toggle theme">
+                <Icon Name="sun" Size="17" Class="theme-icon-sun" />
+                <Icon Name="moon" Size="17" Class="theme-icon-moon" />
+            </button>
         </li>
     </ul>
 </nav>

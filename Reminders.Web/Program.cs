@@ -9,6 +9,7 @@ using Reminders.Data;
 using Reminders.Models;
 using Reminders.Models.Settings;
 using Reminders.Web.Components;
+using Reminders.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -88,6 +89,8 @@ builder.Services.AddScoped<ISmsNotificationSender, SmsNotificationSender>();
 builder.Services.AddScoped<IVoiceNotificationSender, VoiceNotificationSender>();
 builder.Services.AddScoped<IPushNotificationSender, PushNotificationSender>();
 builder.Services.AddScoped<IVerificationSender, VerificationSender>();
+builder.Services.AddSingleton<ReminderActionLinks>();
+builder.Services.AddSingleton<IReminderActionLinks>(sp => sp.GetRequiredService<ReminderActionLinks>());
 builder.Services.AddHostedService<ReminderScheduler>();
 
 // ── MVC Controllers ───────────────────────────────────────────────────────────
@@ -223,6 +226,30 @@ app.MapGet("/confirm-contact-endpoint", async (AppDbContext db, int endpointId, 
 
     return Results.Redirect("/profile?confirm=endpoint-ok");
 });
+
+// ── Notification actions (snooze / mark done) ─────────────────────────────────
+// Called from a push notification's buttons (fetch, expects JSON) and from the buttons on the
+// /r/{token} page (form post, expects a redirect). The signed token is the only credential.
+static IResult ActionResult(HttpRequest request, string token, bool ok, string result)
+{
+    if (request.HasFormContentType)
+        return Results.Redirect(ok ? $"/r/{Uri.EscapeDataString(token)}?result={result}" : $"/r/{Uri.EscapeDataString(token)}");
+    return ok ? Results.Ok(new { ok = true, result }) : Results.NotFound(new { ok = false });
+}
+
+app.MapPost("/api/reminder-actions/{token}/snooze", async (string token, int? minutes, HttpRequest request, ReminderActionLinks links, IReminderService reminders) =>
+{
+    var ok = links.TryReadToken(token, out var id, out var userId)
+             && await reminders.SnoozeAsync(id, userId, TimeSpan.FromMinutes(Math.Clamp(minutes ?? 10, 1, 7 * 24 * 60)));
+    return ActionResult(request, token, ok, "snoozed");
+}).DisableAntiforgery();
+
+app.MapPost("/api/reminder-actions/{token}/done", async (string token, HttpRequest request, ReminderActionLinks links, IReminderService reminders) =>
+{
+    var ok = links.TryReadToken(token, out var id, out var userId)
+             && await reminders.MarkDoneAsync(id, userId, skipUpcoming: false);
+    return ActionResult(request, token, ok, "done");
+}).DisableAntiforgery();
 
 app.MapPost("/logout", async (SignInManager<AppUser> signInManager) =>
 {

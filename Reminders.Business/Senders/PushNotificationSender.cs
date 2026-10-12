@@ -15,12 +15,14 @@ public class PushNotificationSender : IPushNotificationSender
     private readonly VapidSettings _vapid;
     private readonly AppDbContext _db;
     private readonly ILogger<PushNotificationSender> _logger;
+    private readonly IReminderActionLinks? _links;
 
-    public PushNotificationSender(IOptions<VapidSettings> vapid, AppDbContext db, ILogger<PushNotificationSender> logger)
+    public PushNotificationSender(IOptions<VapidSettings> vapid, AppDbContext db, ILogger<PushNotificationSender> logger, IReminderActionLinks? links = null)
     {
         _vapid = vapid.Value;
         _db = db;
         _logger = logger;
+        _links = links;
     }
 
     public async Task<int> SendAsync(AppUser user, Reminder reminder, IEnumerable<string>? endpointFilter = null)
@@ -46,13 +48,17 @@ public class PushNotificationSender : IPushNotificationSender
 
         var payload = JsonSerializer.Serialize(new
         {
-            title = $"⏰ {reminder.Name}",
+            title = reminder.Name,
             body = string.IsNullOrWhiteSpace(reminder.Description)
                 ? $"Reminder: {reminder.Name}"
                 : reminder.Description,
             icon = "/icon-192.png",
             badge = "/badge-72.png",
-            url = "/reminders"
+            tag = $"reminder-{reminder.Id}",
+            // Tapping the notification opens the snooze/done page; the two buttons act without opening anything.
+            url = _links?.ActionPagePath(reminder) ?? "/reminders",
+            snoozeUrl = _links?.SnoozePath(reminder, 10),
+            doneUrl = _links?.DonePath(reminder)
         });
 
         if (string.IsNullOrWhiteSpace(_vapid.PublicKey) || string.IsNullOrWhiteSpace(_vapid.PrivateKey)

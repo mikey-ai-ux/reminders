@@ -119,6 +119,9 @@ public class WebAppTests : IClassFixture<ReminderAppFactory>
     [InlineData("/sw.js")]
     [InlineData("/icon-192.png")]
     [InlineData("/badge-72.png")]
+    [InlineData("/manifest.json")]
+    [InlineData("/forgot-password")]
+    [InlineData("/access-denied")]
     public async Task PublicPagesAndAssets_Load(string path)
     {
         var response = await NewClient().GetAsync(path);
@@ -151,6 +154,8 @@ public class WebAppTests : IClassFixture<ReminderAppFactory>
     [InlineData("/profile")]
     [InlineData("/profile/subscription")]
     [InlineData("/profile/payment-history")]
+    [InlineData("/profile/password")]
+    [InlineData("/profile/delete")]
     public async Task ProtectedPages_SendAnonymousVisitorsToLogin(string path)
     {
         var response = await NewClient().GetAsync(path);
@@ -353,6 +358,222 @@ public class WebAppTests : IClassFixture<ReminderAppFactory>
         var response = await NewClient().PostAsync("/api/stripe/webhook", JsonBody("""{"type":"checkout.session.completed"}"""));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Pages_UseTheIconSet_NotEmoji()
+    {
+        var client = NewClient();
+        await RegisterAsync(client);
+
+        var anonymous = NewClient();
+        foreach (var path in new[] { "/", "/reminders", "/history", "/profile", "/account/login", "/register" })
+        {
+            // A signed-in user is redirected away from the sign-in page, so fetch the public pages signed out.
+            var html = await (path is "/account/login" or "/register" ? anonymous : client).GetStringAsync(path);
+            Assert.Contains("<svg", html);
+            Assert.DoesNotMatch(@"[\u2600-\u27BF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDC00-\uDFFF]", html);
+        }
+    }
+
+    [Fact]
+    public async Task ForgotPassword_GivesTheSameAnswerForKnownAndUnknownEmails_AndNeverShowsTheLink()
+    {
+        var email = await RegisterAsync(NewClient());
+
+        foreach (var address in new[] { email, "nobody@example.com" })
+        {
+            var client = NewClient();
+            var page = await client.GetStringAsync("/forgot-password");
+            var response = await client.PostAsync("/forgot-password", new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["_handler"] = "forgot-password",
+                ["__RequestVerificationToken"] = HiddenField(page, "__RequestVerificationToken"),
+                ["model.Email"] = address
+            }));
+            var html = await response.Content.ReadAsStringAsync();
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Contains("a reset link is on its way", html);
+            Assert.DoesNotContain("reset-password?userId=", html);
+        }
+    }
+
+    [Fact]
+    public async Task ResetPassword_WithAValidLink_ChangesThePassword()
+    {
+        const string newPassword = "brand-new-pass-7";
+        var email = await RegisterAsync(NewClient());
+
+        string userId, code;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var users = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<AppUser>>();
+            var user = await users.FindByEmailAsync(email);
+            userId = user!.Id;
+            code = await users.GeneratePasswordResetTokenAsync(user);
+        }
+
+        async Task<string> Submit(string token, string password)
+        {
+            var client = NewClient();
+            var url = $"/reset-password?userId={Uri.EscapeDataString(userId)}&code={Uri.EscapeDataString(token)}";
+            var page = await client.GetStringAsync(url);
+            var response = await client.PostAsync(url, new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["_handler"] = "reset-password",
+                ["__RequestVerificationToken"] = HiddenField(page, "__RequestVerificationToken"),
+                ["model.Password"] = password,
+                ["model.ConfirmPassword"] = password
+            }));
+            return await response.Content.ReadAsStringAsync();
+        }
+
+        Assert.Contains("invalid or has expired", await Submit("not-a-real-token", newPassword));
+        Assert.Contains("Your password has been changed.", await Submit(code, newPassword));
+
+        Assert.Equal(HttpStatusCode.OK, (await LoginAsync(NewClient(), email, Password)).StatusCode); // old password rejected
+        Assert.Equal(HttpStatusCode.Redirect, (await LoginAsync(NewClient(), email, newPassword)).StatusCode);
+    }
+
+    [Fact]
+    public async Task ChangePassword_NeedsTheCurrentPassword_AndKeepsTheUserSignedIn()
+    {
+        const string newPassword = "another-pass-42";
+        var client = NewClient();
+        var email = await RegisterAsync(client);
+
+        async Task<string> Submit(string current)
+        {
+            var page = await client.GetStringAsync("/profile/password");
+            var response = await client.PostAsync("/profile/password", new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["_handler"] = "change-password",
+                ["__RequestVerificationToken"] = HiddenField(page, "__RequestVerificationToken"),
+                ["model.CurrentPassword"] = current,
+                ["model.NewPassword"] = newPassword,
+                ["model.ConfirmPassword"] = newPassword
+            }));
+            return await response.Content.ReadAsStringAsync();
+        }
+
+        Assert.Contains("The current password is not correct.", await Submit("wrong-current-1"));
+        Assert.Contains("Your password has been changed.", await Submit(Password));
+
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/reminders")).StatusCode);
+        Assert.Equal(HttpStatusCode.Redirect, (await LoginAsync(NewClient(), email, newPassword)).StatusCode);
+    }
+
+    private async Task<(int ReminderId, string Token)> AddReminderWithTokenAsync(string email, string interval = "None")
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var userId = (await db.Users.SingleAsync(u => u.Email == email)).Id;
+        var reminder = new Reminder { UserId = userId, Name = "Take a break", OccursAt = DateTime.UtcNow.AddDays(1), RecurringInterval = interval };
+        db.Reminders.Add(reminder);
+        await db.SaveChangesAsync();
+        var links = scope.ServiceProvider.GetRequiredService<Reminders.Web.Services.ReminderActionLinks>();
+        return (reminder.Id, links.CreateToken(reminder));
+    }
+
+    private async Task<Reminder?> LoadReminderAsync(int id)
+    {
+        using var scope = _factory.Services.CreateScope();
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>().Reminders.AsNoTracking().SingleOrDefaultAsync(r => r.Id == id);
+    }
+
+    [Fact]
+    public async Task NotificationLink_WorksWithoutSigningIn_ToSnoozeAndMarkDone()
+    {
+        var email = await RegisterAsync(NewClient());
+        var (id, token) = await AddReminderWithTokenAsync(email);
+        var anonymous = NewClient();
+
+        var page = await anonymous.GetStringAsync($"/r/{token}");
+        Assert.Contains("Take a break", page);
+        Assert.Contains("Mark as done", page);
+        Assert.Contains("In 10 minutes", page);
+
+        // The buttons on the page post a form and get sent back to the page.
+        var snooze = await anonymous.PostAsync($"/api/reminder-actions/{token}/snooze?minutes=60", new FormUrlEncodedContent(new Dictionary<string, string>()));
+        Assert.Equal(HttpStatusCode.Redirect, snooze.StatusCode);
+        Assert.Equal($"/r/{Uri.EscapeDataString(token)}?result=snoozed", snooze.Headers.Location?.OriginalString);
+        var snoozed = (await LoadReminderAsync(id))!.SnoozedUntil;
+        Assert.NotNull(snoozed);
+        Assert.InRange(snoozed.Value, DateTime.UtcNow.AddMinutes(58), DateTime.UtcNow.AddMinutes(62));
+        Assert.Contains("Snoozed.", await anonymous.GetStringAsync(snooze.Headers.Location!.OriginalString));
+
+        // A push notification's buttons call the same address in the background and get JSON.
+        var done = await anonymous.PostAsync($"/api/reminder-actions/{token}/done", null);
+        Assert.Equal(HttpStatusCode.OK, done.StatusCode);
+        Assert.Contains("\"ok\":true", await done.Content.ReadAsStringAsync());
+        var after = await LoadReminderAsync(id);
+        Assert.Null(after!.SnoozedUntil);
+        Assert.False(after.IsActive);
+    }
+
+    [Fact]
+    public async Task NotificationLink_ThatIsForgedOrForADeletedReminder_DoesNothing()
+    {
+        var email = await RegisterAsync(NewClient());
+        var (id, token) = await AddReminderWithTokenAsync(email);
+        var anonymous = NewClient();
+
+        var forged = token[..^6] + (token.EndsWith("AAAAAA") ? "BBBBBB" : "AAAAAA");
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.PostAsync($"/api/reminder-actions/{forged}/snooze?minutes=10", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.PostAsync("/api/reminder-actions/not-a-token/done", null)).StatusCode);
+        Assert.Contains("This link no longer works", await anonymous.GetStringAsync($"/r/{forged}"));
+        Assert.Null((await LoadReminderAsync(id))!.SnoozedUntil);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Reminders.Remove(await db.Reminders.SingleAsync(r => r.Id == id));
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Equal(HttpStatusCode.NotFound, (await anonymous.PostAsync($"/api/reminder-actions/{token}/done", null)).StatusCode);
+        Assert.Contains("This link no longer works", await anonymous.GetStringAsync($"/r/{token}"));
+    }
+
+    [Fact]
+    public async Task DeleteAccount_NeedsThePassword_ThenRemovesEverything_AndSignsOut()
+    {
+        var client = NewClient();
+        var email = await RegisterAsync(client);
+        var (reminderId, token) = await AddReminderWithTokenAsync(email);
+
+        async Task<HttpResponseMessage> Submit(string confirmation)
+        {
+            var page = await client.GetStringAsync("/profile/delete");
+            return await client.PostAsync("/profile/delete", new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["_handler"] = "delete-account",
+                ["__RequestVerificationToken"] = HiddenField(page, "__RequestVerificationToken"),
+                ["model.Confirmation"] = confirmation
+            }));
+        }
+
+        var wrong = await Submit("not-my-password-1");
+        Assert.Equal(HttpStatusCode.OK, wrong.StatusCode);
+        Assert.Contains("That password is not correct.", await wrong.Content.ReadAsStringAsync());
+        Assert.NotNull(await LoadReminderAsync(reminderId));
+
+        var deleted = await Submit(Password);
+        Assert.Equal(HttpStatusCode.Redirect, deleted.StatusCode);
+        Assert.Equal("/?account=deleted", PathOf(deleted));
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            Assert.False(await db.Users.AnyAsync(u => u.Email == email));
+        }
+        Assert.Null(await LoadReminderAsync(reminderId));
+
+        Assert.Contains("Your account and all its data have been deleted.", await client.GetStringAsync("/?account=deleted"));
+        Assert.Equal(HttpStatusCode.Redirect, (await client.GetAsync("/reminders")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await LoginAsync(NewClient(), email, Password)).StatusCode); // can no longer sign in
+        Assert.Equal(HttpStatusCode.NotFound, (await NewClient().PostAsync($"/api/reminder-actions/{token}/done", null)).StatusCode);
     }
 
     private static StringContent JsonBody(string json) => new(json, System.Text.Encoding.UTF8, "application/json");

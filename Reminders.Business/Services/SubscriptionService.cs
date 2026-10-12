@@ -327,6 +327,31 @@ public class SubscriptionService : ISubscriptionService
 
     public async Task<SubscriptionPlan?> GetCurrentPlanAsync(AppUser user) => await GetEffectivePlanAsync(user);
 
+    public async Task<bool> CancelSubscriptionAsync(AppUser user)
+    {
+        if (string.IsNullOrWhiteSpace(user.StripeSubscriptionId)) return true;
+        if (!IsBillingConfigured)
+        {
+            _logger.LogWarning("Cannot cancel subscription {SubscriptionId} for user {UserId}: Stripe is not configured", user.StripeSubscriptionId, user.Id);
+            return false;
+        }
+
+        try
+        {
+            await new Stripe.SubscriptionService().CancelAsync(user.StripeSubscriptionId);
+            return true;
+        }
+        catch (StripeException ex) when (ex.StripeError?.Code == "resource_missing")
+        {
+            return true; // already gone on Stripe's side
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe error cancelling subscription for user {UserId}", user.Id);
+            return false;
+        }
+    }
+
     private static SubscriptionTier TierForPlan(SubscriptionPlan plan) => plan.Name switch
     {
         "Free" => SubscriptionTier.Free,

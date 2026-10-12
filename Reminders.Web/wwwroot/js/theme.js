@@ -35,7 +35,5 @@ function toggleTheme() {
     updateToggleIcon(next);
 }
 
-function updateToggleIcon(theme) {
-    const btn = document.querySelector('.theme-toggle');
-    if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
-}
+// The toggle holds a sun and a moon icon; CSS shows the right one from the data-theme attribute.
+function updateToggleIcon(theme) { }

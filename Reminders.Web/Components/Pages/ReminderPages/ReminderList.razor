@@ -3,46 +3,86 @@
 @using Microsoft.AspNetCore.Identity
 @inject IReminderService ReminderSvc
 @inject UserManager<AppUser> UserManager
-@inject ISubscriptionService SubSvc
 @inject AuthenticationStateProvider AuthStateProvider
+@inject IVerificationSender VerificationSender
+@inject NavigationManager Nav
+@inject IWebHostEnvironment Env
+@inject Reminders.Data.AppDbContext Db
 @rendermode InteractiveServer
 
-<PageTitle>My Reminders</PageTitle>
+<PageTitle>Reminders</PageTitle>
 
-<div class="page-header">
+<div class="page-head">
     <div>
-        <h1>🔔 My Reminders</h1>
-        <p class="page-subtitle">Manage your scheduled reminders</p>
-
-        @if (currentUser?.SubscriptionTier == SubscriptionTier.Free)
-        {
-            <div class="usage-row">
-                <span class="badge badge-free">Free plan</span>
-                <span class="usage-text">@totalCount / @FreeLimit reminders used</span>
-                @if (totalCount >= FreeLimit)
-                {
-                    <span class="usage-limit">Limit reached</span>
-                }
-            </div>
-            <div class="slot-bar" aria-label="Reminder slots usage">
-                @for (var i = 1; i <= FreeLimit; i++)
-                {
-                    var cls = i <= totalCount
-                        ? (i >= 10 ? "filled danger" : i >= 8 ? "filled warning" : "filled")
-                        : string.Empty;
-                    <span class="slot @cls"></span>
-                }
-            </div>
-        }
+        <h1>Reminders</h1>
+        <p class="page-subtitle">@Summary</p>
     </div>
-    <button class="btn btn-primary" @onclick="ShowNewForm" disabled="@(currentUser?.SubscriptionTier == SubscriptionTier.Free && totalCount >= FreeLimit)">+ New Reminder</button>
+    <button class="btn btn-primary" @onclick="ShowNewForm" disabled="@AtLimit"><Icon Name="plus" Size="16" /> New reminder</button>
 </div>
+
+@if (!isLoading && currentUser is not null)
+{
+    @if (!currentUser.EmailConfirmed && !string.IsNullOrWhiteSpace(currentUser.Email))
+    {
+        <div class="notice">
+            <Icon Name="mail" Size="18" />
+            <div class="notice-text">
+                <strong>Confirm your email to get reminders by email.</strong>
+                <span>We'll send a link to @currentUser.Email.</span>
+                @if (!string.IsNullOrWhiteSpace(confirmStatus))
+                {
+                    <span class="notice-status">@confirmStatus</span>
+                }
+                @if (!string.IsNullOrWhiteSpace(devConfirmLink))
+                {
+                    <a href="@devConfirmLink">Open confirmation link (development only)</a>
+                }
+            </div>
+            <button class="btn btn-sm btn-secondary" @onclick="SendConfirmation" disabled="@sendingConfirmation">@(sendingConfirmation ? "Sending…" : "Send link")</button>
+        </div>
+    }
+
+    <form class="quick-add" @onsubmit="QuickAdd">
+        <span class="quick-add-icon"><Icon Name="sparkles" Size="18" /></span>
+        <input class="quick-add-input" @bind="quickName" @bind:event="oninput" placeholder="Remind me to…" maxlength="200" aria-label="What to be reminded about" disabled="@AtLimit" />
+        <select class="quick-add-when" @bind="quickWhen" aria-label="When" disabled="@AtLimit">
+            <option value="hour">In 1 hour</option>
+            <option value="evening">This evening</option>
+            <option value="tomorrow">Tomorrow morning</option>
+            <option value="monday">Next Monday</option>
+            <option value="custom">Pick date &amp; time…</option>
+        </select>
+        <button type="submit" class="btn btn-primary" disabled="@(AtLimit || quickBusy || string.IsNullOrWhiteSpace(quickName))">Add</button>
+    </form>
+    @if (!string.IsNullOrWhiteSpace(quickError))
+    {
+        <div class="alert alert-error" role="alert"><Icon Name="alert-triangle" Size="16" /> @quickError</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(quickInfo))
+    {
+        <div class="alert alert-success"><Icon Name="check-circle" Size="16" /> @quickInfo</div>
+    }
+
+    @if (currentUser.SubscriptionTier == SubscriptionTier.Free)
+    {
+        <div class="usage">
+            <div class="usage-bar" role="progressbar" aria-valuemin="0" aria-valuemax="@FreeLimit" aria-valuenow="@activeCount" aria-label="Active reminders used on the Free plan">
+                <span class="@(activeCount >= FreeLimit ? "full" : activeCount >= FreeLimit - 2 ? "warn" : "")" style="width:@(Math.Min(100, activeCount * 100 / FreeLimit))%"></span>
+            </div>
+            <span class="usage-text">@activeCount of @FreeLimit active reminders on the Free plan</span>
+            @if (AtLimit)
+            {
+                <a href="/profile/subscription" class="usage-link">Upgrade for unlimited</a>
+            }
+        </div>
+    }
+}
 
 @if (showForm)
 {
     <div class="modal-overlay" @onclick="HideForm">
         <div class="modal-card" @onclick:stopPropagation>
-            <ReminderForm Reminder="editingReminder" CurrentUser="currentUser" OnSaved="OnReminderSaved" OnCancel="HideForm" />
+            <ReminderForm @key="formKey" Reminder="editingReminder" Template="templateReminder" CurrentUser="currentUser" OnSaved="OnReminderSaved" OnCancel="HideForm" />
         </div>
     </div>
 }
@@ -80,94 +120,243 @@
 else if (reminders.Count == 0)
 {
     <div class="empty-state">
-        <div class="empty-icon">📭</div>
+        <div class="empty-icon"><Icon Name="inbox" Size="34" Stroke="1.6" /></div>
         <h2>No reminders yet</h2>
-        <p>Create your first reminder to get started!</p>
-        <button class="btn btn-primary" @onclick="ShowNewForm">+ New Reminder</button>
+        <p>Type what you need to remember in the box above, or set one up with all the options.</p>
+        <button class="btn btn-primary" @onclick="ShowNewForm"><Icon Name="plus" Size="16" /> New reminder</button>
     </div>
 }
 else
 {
-    <div class="reminders-grid">
-        @foreach (var reminder in reminders)
+    @if (reminders.Count > 5)
+    {
+        <div class="list-search">
+            <Icon Name="search" Size="16" />
+            <input @bind="search" @bind:event="oninput" placeholder="Search reminders" aria-label="Search reminders" />
+        </div>
+    }
+
+    @if (!Upcoming.Any() && !Paused.Any() && !Past.Any())
+    {
+        <p class="muted">No reminders match "@search".</p>
+    }
+
+    @if (Upcoming.Any())
+    {
+        <h2 class="list-heading">Upcoming <span class="count">@Upcoming.Count()</span></h2>
+        <div class="reminder-list">
+            @foreach (var reminder in Upcoming)
+            {
+                <ReminderCard @key="reminder.Id" Reminder="reminder" OnEdit="EditReminder" OnPause="PauseReminder" OnResume="ResumeReminder" OnDuplicate="DuplicateReminder" OnDelete="DeleteReminder" OnDone="MarkDone" />
+            }
+        </div>
+    }
+
+    @if (Paused.Any())
+    {
+        <h2 class="list-heading">Paused <span class="count">@Paused.Count()</span></h2>
+        <div class="reminder-list">
+            @foreach (var reminder in Paused)
+            {
+                <ReminderCard @key="reminder.Id" Reminder="reminder" OnEdit="EditReminder" OnPause="PauseReminder" OnResume="ResumeReminder" OnDuplicate="DuplicateReminder" OnDelete="DeleteReminder" OnDone="MarkDone" />
+            }
+        </div>
+    }
+
+    @if (Past.Any())
+    {
+        <button class="list-heading list-heading-toggle" @onclick="() => showPast = !showPast" aria-expanded="@showPast">
+            Done <span class="count">@Past.Count()</span>
+            <Icon Name="chevron-down" Size="16" Class="@(showPast ? "flip" : "")" />
+        </button>
+        @if (showPast)
         {
-            <ReminderCard Reminder="reminder"
-                          CurrentUser="currentUser"
-                          OnEdit="EditReminder"
-                          OnPause="PauseReminder"
-                          OnResume="ResumeReminder"
-                          OnDelete="DeleteReminder" />
+            <div class="reminder-list">
+                @foreach (var reminder in Past)
+                {
+                    <ReminderCard @key="reminder.Id" Reminder="reminder" OnEdit="EditReminder" OnPause="PauseReminder" OnResume="ResumeReminder" OnDuplicate="DuplicateReminder" OnDelete="DeleteReminder" OnDone="MarkDone" />
+                }
+            </div>
         }
-    </div>
+    }
 }
-
-<style>
-.page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 2rem; flex-wrap: wrap; gap: 1rem; }
-.page-header h1 { font-size: 1.75rem; font-weight: 700; margin: 0 0 0.25rem; color: var(--color-text); }
-.page-subtitle { color: var(--color-text-muted); margin: 0; font-size: 0.9rem; }
-.usage-row { margin-top: .6rem; display:flex; align-items:center; gap:.55rem; flex-wrap:wrap; }
-.usage-text { font-size:.82rem; color: var(--color-text-muted); }
-.usage-limit { font-size:.75rem; color:#fff; background:var(--color-danger); padding:2px 8px; border-radius:12px; }
-.slot-bar { margin-top:.45rem; display:grid; grid-template-columns:repeat(10, minmax(16px, 1fr)); gap:.28rem; max-width:260px; }
-.slot { height:8px; border-radius:999px; background:var(--color-border); }
-.slot.filled { background:var(--color-primary); }
-.slot.filled.warning { background: var(--color-warning); }
-.slot.filled.danger { background: var(--color-danger); }
-
-.reminders-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem; }
-.empty-state { text-align: center; padding: 5rem 1rem; }
-.empty-icon { font-size: 4rem; margin-bottom: 1rem; }
-.empty-state h2 { font-size: 1.5rem; color: var(--color-text); margin-bottom: 0.5rem; }
-.empty-state p { color: var(--color-text-muted); margin-bottom: 1.5rem; }
-.loading-state { text-align: center; padding: 4rem; color: var(--color-text-muted); }
-.spinner { width: 36px; height: 36px; border: 3px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 1rem; }
-@@keyframes spin { to { transform: rotate(360deg); } }
-
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 500; padding: 1rem; overscroll-behavior: contain; }
-.modal-card { background: var(--color-surface); border-radius: 16px; padding: 2rem; width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; }
-.confirm-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 14px; width:100%; max-width: 430px; padding: 1.2rem 1.2rem 1rem; box-shadow: var(--shadow-lg); }
-@@media (max-width: 768px) {
-  .modal-overlay { padding: 0; align-items: stretch; }
-  .modal-card { border-radius: 0; max-width: none; max-height: none; height: 100dvh; padding: 1rem; }
-}
-.confirm-card h3 { margin:0 0 .45rem; }
-.confirm-card p { margin:0; color:var(--color-text-muted); }
-.confirm-actions { display:flex; justify-content:flex-end; gap:.6rem; margin-top:1rem; }
-</style>
 
 @code {
+    private const int FreeLimit = ReminderService.FreeReminderLimit;
+
     private List<Reminder> reminders = new();
     private AppUser? currentUser;
     private bool isLoading = true;
-    private bool showForm = false;
-    private Reminder? editingReminder;
 
-    private bool showDeleteConfirm = false;
+    private bool showForm;
+    private int formKey;
+    private Reminder? editingReminder;
+    private Reminder? templateReminder;
+
+    private bool showDeleteConfirm;
     private Reminder? pendingDeleteReminder;
 
-    private const int FreeLimit = ReminderService.FreeReminderLimit;
-    private int totalCount => reminders.Count;
+    private string search = string.Empty;
+    private bool showPast;
+
+    private string quickName = string.Empty;
+    private string quickWhen = "hour";
+    private bool quickBusy;
+    private string? quickError;
+    private string? quickInfo;
+
+    private bool sendingConfirmation;
+    private string? confirmStatus;
+    private string? devConfirmLink;
+
+    // Only reminders that can still fire count towards the Free plan limit.
+    private int activeCount => reminders.Count(r => r.IsActive);
+    private bool AtLimit => currentUser?.SubscriptionTier == SubscriptionTier.Free && activeCount >= FreeLimit;
+
+    private IEnumerable<Reminder> Matching => string.IsNullOrWhiteSpace(search)
+        ? reminders
+        : reminders.Where(r => r.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+                            || (r.Description?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    // A finished one-time reminder that was snoozed is still coming up, at its snooze time.
+    private static bool IsSnoozed(Reminder r) => r.SnoozedUntil is { } until && until > DateTime.UtcNow;
+    private static DateTime NextTime(Reminder r) => IsSnoozed(r) && (!r.IsActive || r.SnoozedUntil < r.OccursAt) ? r.SnoozedUntil!.Value : r.OccursAt;
+
+    private IEnumerable<Reminder> Upcoming => Matching.Where(r => !r.IsPaused && (r.IsActive || IsSnoozed(r))).OrderBy(NextTime);
+    private IEnumerable<Reminder> Paused => Matching.Where(r => r.IsActive && r.IsPaused).OrderBy(r => r.OccursAt);
+    private IEnumerable<Reminder> Past => Matching.Where(r => !r.IsActive && !IsSnoozed(r)).OrderByDescending(r => r.OccursAt);
+
+    private string Summary
+    {
+        get
+        {
+            if (isLoading) return "Loading…";
+            var next = reminders.Where(r => r.IsActive && !r.IsPaused).OrderBy(r => r.OccursAt).FirstOrDefault();
+            return next is null
+                ? "Nothing scheduled. Add your first reminder below."
+                : $"Next up: {next.Name}, {TimeText.DayInline(next.OccursAt, next.TimeZoneId, DateTime.UtcNow)}";
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         currentUser = await UserManager.GetUserAsync(authState.User);
-        if (currentUser != null)
-        {
-            reminders = await ReminderSvc.GetUserRemindersAsync(currentUser.Id);
-        }
+        await ReloadAsync();
         isLoading = false;
     }
 
-    void ShowNewForm() { editingReminder = null; showForm = true; }
+    private async Task ReloadAsync()
+    {
+        if (currentUser != null) reminders = await ReminderSvc.GetUserRemindersAsync(currentUser.Id);
+    }
+
+    void ShowNewForm() => OpenForm(null, null);
+    void EditReminder(Reminder r) => OpenForm(r, null);
+    void DuplicateReminder(Reminder r) => OpenForm(null, r);
     void HideForm() => showForm = false;
 
-    void EditReminder(Reminder r) { editingReminder = r; showForm = true; }
+    private void OpenForm(Reminder? edit, Reminder? template)
+    {
+        editingReminder = edit;
+        templateReminder = template;
+        formKey++; // a fresh form each time, so nothing leaks from the previous one
+        quickError = quickInfo = null;
+        showForm = true;
+    }
 
     async Task OnReminderSaved()
     {
         showForm = false;
-        if (currentUser != null) reminders = await ReminderSvc.GetUserRemindersAsync(currentUser.Id);
+        await ReloadAsync();
+    }
+
+    private async Task QuickAdd()
+    {
+        if (currentUser is null || quickBusy || string.IsNullOrWhiteSpace(quickName)) return;
+        quickError = quickInfo = null;
+
+        if (quickWhen == "custom")
+        {
+            OpenForm(null, new Reminder { Name = quickName.Trim(), RecurringInterval = RecurrenceCalculator.None, OccursAt = default, TimeZoneId = TimeZoneOptions.Normalize(currentUser.TimeZoneId) });
+            quickName = string.Empty;
+            quickWhen = "hour";
+            return;
+        }
+
+        quickBusy = true;
+        try
+        {
+            var tzId = TimeZoneOptions.Normalize(currentUser.TimeZoneId);
+            var tz = RecurrenceCalculator.ResolveTimeZone(tzId);
+            var local = QuickTimes.Resolve(quickWhen, TimeZoneOptions.NowIn(tzId));
+
+            var reminder = new Reminder
+            {
+                UserId = currentUser.Id,
+                Name = quickName.Trim(),
+                Icon = "bell",
+                OccursAt = RecurrenceCalculator.ToUtc(local, tz),
+                TimeZoneId = tzId,
+                RecurringInterval = RecurrenceCalculator.None
+            };
+
+            // Deliver the same way a new reminder in the full form would: confirmed email plus registered devices.
+            var contact = Db.Users.AsNoTracking().Where(u => u.Id == currentUser.Id).Select(u => new { u.Email, u.EmailConfirmed }).FirstOrDefault();
+            if (contact is { EmailConfirmed: true } && !string.IsNullOrWhiteSpace(contact.Email))
+            {
+                reminder.Channels.Add(new ReminderChannel { Channel = NotificationChannel.Email });
+                reminder.Targets.Add(new ReminderTarget { Channel = NotificationChannel.Email, TargetType = "EmailAddress", TargetValue = contact.Email, Label = contact.Email });
+            }
+
+            var devices = Db.PushSubscriptions.AsNoTracking().Where(p => p.UserId == currentUser.Id).OrderByDescending(p => p.CreatedAt).ToList();
+            if (devices.Count > 0)
+            {
+                reminder.Channels.Add(new ReminderChannel { Channel = NotificationChannel.Push });
+                var n = 1;
+                foreach (var d in devices)
+                    reminder.Targets.Add(new ReminderTarget { Channel = NotificationChannel.Push, TargetType = "PushDevice", TargetValue = d.Endpoint, Label = $"{(string.IsNullOrWhiteSpace(d.DeviceType) ? "Device" : d.DeviceType)} #{n++}" });
+            }
+
+            await ReminderSvc.CreateAsync(reminder);
+            var when = TimeText.DayInline(reminder.OccursAt, tzId, DateTime.UtcNow);
+            quickInfo = reminder.Channels.Count == 0
+                ? $"Added for {when}. It has no way to notify you yet: confirm your email or register a device, then edit it."
+                : $"Added for {when}.";
+            quickName = string.Empty;
+            await ReloadAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            quickError = ex.Message;
+        }
+        finally
+        {
+            quickBusy = false;
+        }
+    }
+
+    private async Task SendConfirmation()
+    {
+        if (currentUser is null || string.IsNullOrWhiteSpace(currentUser.Email) || sendingConfirmation) return;
+        sendingConfirmation = true;
+        try
+        {
+            var token = await UserManager.GenerateEmailConfirmationTokenAsync(currentUser);
+            var link = $"{Nav.BaseUri}confirm-email?userId={Uri.EscapeDataString(currentUser.Id)}&code={Uri.EscapeDataString(token)}";
+            var sent = await VerificationSender.SendEmailAsync(currentUser.Email, "Confirm your Reminders email", $"Please confirm your email by opening this link: {link}");
+
+            devConfirmLink = !sent && Env.IsDevelopment() ? link : null;
+            confirmStatus = sent
+                ? "Sent. Open the link in the email, then refresh this page."
+                : Env.IsDevelopment()
+                    ? "Email delivery is not set up on this server."
+                    : "The email could not be sent. Email delivery is not set up on this server yet.";
+        }
+        finally
+        {
+            sendingConfirmation = false;
+        }
     }
 
     // Reload after each change: resuming can move a recurring reminder to its next date,
@@ -176,14 +365,23 @@ else
     {
         if (currentUser == null) return;
         await ReminderSvc.PauseAsync(id, currentUser.Id);
-        reminders = await ReminderSvc.GetUserRemindersAsync(currentUser.Id);
+        await ReloadAsync();
     }
 
     async Task ResumeReminder(int id)
     {
         if (currentUser == null) return;
         await ReminderSvc.ResumeAsync(id, currentUser.Id);
-        reminders = await ReminderSvc.GetUserRemindersAsync(currentUser.Id);
+        await ReloadAsync();
+    }
+
+    // Done from the list means "I've dealt with it": a one-time reminder is finished,
+    // a repeating one skips ahead to its next occurrence.
+    async Task MarkDone(int id)
+    {
+        if (currentUser == null) return;
+        await ReminderSvc.MarkDoneAsync(id, currentUser.Id, skipUpcoming: true);
+        await ReloadAsync();
     }
 
     Task DeleteReminder(int id)
@@ -198,10 +396,9 @@ else
         if (pendingDeleteReminder is null || currentUser is null) return;
 
         await ReminderSvc.DeleteAsync(pendingDeleteReminder.Id, currentUser.Id);
-        reminders = reminders.Where(r => r.Id != pendingDeleteReminder.Id).ToList();
-
         pendingDeleteReminder = null;
         showDeleteConfirm = false;
+        await ReloadAsync();
     }
 
     void CancelDelete()

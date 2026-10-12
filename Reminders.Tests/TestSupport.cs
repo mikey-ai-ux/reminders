@@ -103,4 +103,5 @@ public sealed class FakeSubscriptionService : ISubscriptionService
     public Task<int> GetCurrentMonthUsageAsync(string userId) => Task.FromResult(0);
     public Task<SubscriptionPlan?> GetCurrentPlanAsync(AppUser user) => Task.FromResult<SubscriptionPlan?>(null);
     public Task<List<PaymentRecord>> GetPaymentHistoryAsync(AppUser user) => Task.FromResult(new List<PaymentRecord>());
+    public Task<bool> CancelSubscriptionAsync(AppUser user) => Task.FromResult(true);
 }

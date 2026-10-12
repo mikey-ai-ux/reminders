@@ -38,9 +38,10 @@ public class ReminderService : IReminderService
         var user = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == reminder.UserId);
         if (user != null && user.SubscriptionTier == Reminders.Models.Enums.SubscriptionTier.Free)
         {
-            var currentCount = await _db.Reminders.CountAsync(r => r.UserId == reminder.UserId);
+            // Finished one-time reminders stay in the list as history; only ones that can still fire count.
+            var currentCount = await _db.Reminders.CountAsync(r => r.UserId == reminder.UserId && r.IsActive);
             if (currentCount >= FreeReminderLimit)
-                throw new InvalidOperationException($"Free plan allows up to {FreeReminderLimit} reminders. Upgrade to a paid plan for unlimited reminders.");
+                throw new InvalidOperationException($"Free plan allows up to {FreeReminderLimit} active reminders. Delete or finish one, or upgrade to a paid plan for unlimited reminders.");
         }
 
         Normalize(reminder);
@@ -50,6 +51,7 @@ public class ReminderService : IReminderService
         reminder.Id = 0;
         reminder.IsPaused = false;
         reminder.LastNotifiedAt = null;
+        reminder.SnoozedUntil = null;
         ApplySchedule(reminder, now);
         reminder.CreatedAt = now;
         reminder.UpdatedAt = now;
@@ -78,6 +80,7 @@ public class ReminderService : IReminderService
         existing.TimeZoneId = reminder.TimeZoneId;
         existing.RecurringInterval = reminder.RecurringInterval;
         existing.RecurrenceAnchorDay = reminder.RecurrenceAnchorDay;
+        existing.SnoozedUntil = null; // rescheduling replaces any pending snooze
         ApplySchedule(existing, now);
         existing.UpdatedAt = now;
 
@@ -107,6 +110,7 @@ public class ReminderService : IReminderService
         var r = await LoadFreshAsync(id, userId);
         if (r == null) return false;
         r.IsPaused = true;
+        r.SnoozedUntil = null;
         r.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return true;
@@ -121,6 +125,89 @@ public class ReminderService : IReminderService
         r.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
         return true;
+    }
+
+    public static readonly TimeSpan MinSnooze = TimeSpan.FromMinutes(1);
+    public static readonly TimeSpan MaxSnooze = TimeSpan.FromDays(7);
+
+    public async Task<bool> SnoozeAsync(int id, string userId, TimeSpan delay)
+    {
+        var r = await LoadFreshAsync(id, userId);
+        if (r == null) return false;
+
+        if (delay < MinSnooze) delay = MinSnooze;
+        if (delay > MaxSnooze) delay = MaxSnooze;
+
+        r.SnoozedUntil = DateTime.UtcNow.Add(delay);
+        r.IsPaused = false; // asking to be reminded again overrides a pause
+        r.UpdatedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<bool> MarkDoneAsync(int id, string userId, bool skipUpcoming)
+    {
+        var r = await LoadFreshAsync(id, userId);
+        if (r == null) return false;
+
+        var now = DateTime.UtcNow;
+        r.SnoozedUntil = null;
+
+        if (!RecurrenceCalculator.IsRecurring(r.RecurringInterval))
+        {
+            r.IsActive = false;
+        }
+        else if (skipUpcoming && r.IsActive)
+        {
+            // Done early: skip the occurrence that was coming up.
+            var after = r.OccursAt > now ? r.OccursAt : now;
+            var next = RecurrenceCalculator.GetNextOccurrenceUtc(r.OccursAt, r.RecurringInterval, r.TimeZoneId, after, r.RecurrenceAnchorDay);
+            if (next.HasValue) r.OccursAt = next.Value;
+            else r.IsActive = false;
+        }
+
+        r.UpdatedAt = now;
+        await _db.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<Reminder?> GetForActionAsync(int id, string userId) =>
+        await _db.Reminders.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id && r.UserId == userId);
+
+    public async Task<NotificationHistoryPage> GetNotificationHistoryPageAsync(string userId, NotificationHistoryQuery query)
+    {
+        var pageSize = Math.Clamp(query.PageSize, 1, NotificationHistoryQuery.MaxPageSize);
+
+        var rows = _db.ReminderNotifications
+            .AsNoTracking()
+            .Where(n => n.Reminder != null && n.Reminder.UserId == userId);
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            // LIKE ignores case on both SQL Server and SQLite (Contains does not on SQLite).
+            // Escape the wildcard characters so the text is matched literally.
+            var term = query.Search.Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_").Replace("[", "\\[");
+            var pattern = $"%{term}%";
+            rows = rows.Where(n => EF.Functions.Like(n.ReminderName, pattern, "\\") || EF.Functions.Like(n.MessageSnapshot, pattern, "\\"));
+        }
+        if (query.Channel.HasValue) rows = rows.Where(n => n.Channel == query.Channel.Value);
+        if (query.Status.HasValue) rows = rows.Where(n => n.Status == query.Status.Value);
+
+        var total = await rows.CountAsync();
+        var totalPages = Math.Max(1, (int)Math.Ceiling(total / (double)pageSize));
+        var page = Math.Clamp(query.Page, 1, totalPages);
+
+        // Id breaks ties so rows never jump between pages.
+        rows = query.Sort switch
+        {
+            "sent_asc" => rows.OrderBy(n => n.SentAt ?? n.CreatedAt).ThenBy(n => n.Id),
+            "channel_asc" => rows.OrderBy(n => n.Channel).ThenByDescending(n => n.SentAt ?? n.CreatedAt).ThenByDescending(n => n.Id),
+            "status_asc" => rows.OrderBy(n => n.Status).ThenByDescending(n => n.SentAt ?? n.CreatedAt).ThenByDescending(n => n.Id),
+            _ => rows.OrderByDescending(n => n.SentAt ?? n.CreatedAt).ThenByDescending(n => n.Id)
+        };
+
+        var items = await rows.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+        return new NotificationHistoryPage(items, total, page, pageSize);
     }
 
     private async Task<Reminder?> LoadFreshAsync(int id, string userId)
@@ -174,7 +261,7 @@ public class ReminderService : IReminderService
             throw new InvalidOperationException("Reminder name must be 200 characters or fewer.");
 
         reminder.Description = string.IsNullOrWhiteSpace(reminder.Description) ? null : reminder.Description.Trim();
-        reminder.Icon = string.IsNullOrWhiteSpace(reminder.Icon) ? "🔔" : reminder.Icon;
+        reminder.Icon = string.IsNullOrWhiteSpace(reminder.Icon) ? "bell" : reminder.Icon;
         if (reminder.Icon.Length > 20)
             throw new InvalidOperationException("Icon is too long.");
 

@@ -22,6 +22,10 @@ public class Reminder
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastNotifiedAt { get; set; }
 
+    // Set when the user snoozes a notification: one extra notification is sent at this time (UTC),
+    // without changing the regular schedule.
+    public DateTime? SnoozedUntil { get; set; }
+
     public AppUser? User { get; set; }
     public ICollection<ReminderNotification> Notifications { get; set; } = new List<ReminderNotification>();
     public ICollection<ReminderChannel> Channels { get; set; } = new List<ReminderChannel>();

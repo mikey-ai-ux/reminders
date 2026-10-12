@@ -349,6 +349,9 @@ namespace Reminders.Data.Migrations
                         .HasColumnType("nvarchar(100)")
                         .HasDefaultValue("None");
 
+                    b.Property<DateTime?>("SnoozedUntil")
+                        .HasColumnType("datetime2");
+
                     b.Property<string>("TimeZoneId")
                         .IsRequired()
                         .HasMaxLength(100)

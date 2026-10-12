@@ -125,6 +125,21 @@ public class ReminderServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Create_FreePlan_FinishedRemindersDoNotCountTowardsTheLimit()
+    {
+        var user = _database.AddUser();
+        using var db = _database.NewContext();
+        var service = new ReminderService(db);
+
+        // Ten one-time reminders that have already passed are history, not active reminders.
+        for (var i = 0; i < ReminderService.FreeReminderLimit; i++)
+            await service.CreateAsync(EmailReminder(user, DateTime.UtcNow.AddDays(-1), name: $"Old {i}"));
+
+        var created = await service.CreateAsync(EmailReminder(user, DateTime.UtcNow.AddHours(1), name: "New one"));
+        Assert.True(created.IsActive);
+    }
+
+    [Fact]
     public async Task Create_PaidPlan_HasNoReminderLimit()
     {
         var user = _database.AddUser(tier: SubscriptionTier.Pro);

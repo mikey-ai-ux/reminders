@@ -8,6 +8,7 @@
 @inject Reminders.Data.AppDbContext Db
 @inject IVerificationSender VerificationSender
 @inject IWebHostEnvironment Env
+@inject IConfiguration Config
 @rendermode InteractiveServer
 
 <PageTitle>My Profile — Reminders</PageTitle>
@@ -117,21 +118,28 @@ else
                     </InputSelect>
                 </div>
 
-                <button type="submit" class="btn btn-primary">Save Changes</button>
+                <div class="confirm-row">
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                    <a href="/profile/password" class="btn btn-secondary"><Icon Name="lock" Size="15" /> Change password</a>
+                </div>
             </EditForm>
 
             <div class="cal-subscribe card-section">
-                <h3>📅 Mobile Calendar Sync</h3>
-                <p class="muted">Subscribe in iOS/Android calendar and get native mobile notifications.</p>
+                <h3><Icon Name="calendar" Size="18" /> Calendar sync</h3>
+                <p class="muted">Subscribe to this link in your phone or desktop calendar to see your reminders there. Anyone with the link can read them, so keep it private.</p>
 
                 <div class="cal-url-box">
                     <input type="text" readonly value="@CalendarUrl" class="cal-url-input" />
-                    <button class="btn btn-secondary" @onclick="CopyCalendarUrl">@(copied ? "✅ Copied!" : "📋 Copy Link")</button>
+                    <button class="btn btn-secondary" @onclick="CopyCalendarUrl"><Icon Name="@(copied ? "check" : "copy")" Size="15" /> @(copied ? "Copied" : "Copy link")</button>
                 </div>
             </div>
 
             <div class="device-list card-section">
-                <h3>📱 Registered Push Devices</h3>
+                <h3><Icon Name="smartphone" Size="18" /> Push devices</h3>
+                <p class="muted">Push notifications are sent to each browser or phone you register.</p>
+                <div class="confirm-help">
+                    <button type="button" class="btn btn-sm btn-secondary" @onclick="RegisterThisDevice" disabled="@registeringDevice"><Icon Name="plus" Size="14" /> @(registeringDevice ? "Registering..." : "Register this device")</button>
+                </div>
                 @if (!pushDevices.Any())
                 {
                     <p class="muted">No devices registered yet.</p>
@@ -154,8 +162,8 @@ else
             </div>
 
             <div class="device-list card-section">
-                <h3>📮 Additional Email/Phone Endpoints</h3>
-                <p class="muted">Add and confirm extra endpoints that can be selected per reminder.</p>
+                <h3><Icon Name="mail" Size="18" /> Extra email addresses and phone numbers</h3>
+                <p class="muted">Add other addresses or numbers, confirm them, then pick them per reminder.</p>
 
                 <div class="confirm-help">
                     <select class="form-input" @bind="newEndpointChannel">
@@ -208,11 +216,22 @@ else
             </div>
         </div>
     }
-    else if (activeTab == "sub")
+    @if (activeTab == "info")
+    {
+        <div class="danger-zone">
+            <div>
+                <h3>Delete account</h3>
+                <p class="muted">Permanently removes your account, reminders and history.</p>
+            </div>
+            <a href="/profile/delete" class="btn btn-danger-outline"><Icon Name="trash" Size="15" /> Delete account</a>
+        </div>
+    }
+
+    @if (activeTab == "sub")
     {
         <Subscription />
     }
-    else
+    else if (activeTab == "history")
     {
         <PaymentHistory />
     }
@@ -403,6 +422,50 @@ else
         {
             (currentUser.PhoneNumber, currentUser.PhoneNumberConfirmed) = previous;
             Fail(string.Join(" ", result.Errors.Select(e => e.Description)));
+        }
+    }
+
+    private bool registeringDevice;
+
+    private async Task RegisterThisDevice()
+    {
+        if (currentUser is null || registeringDevice) return;
+        registeringDevice = true;
+        try
+        {
+            var vapidPublic = Config["Vapid:PublicKey"];
+            if (string.IsNullOrWhiteSpace(vapidPublic) || vapidPublic.Contains("YOUR_"))
+            {
+                Fail("Push notifications are not set up on this server yet.");
+                return;
+            }
+
+            if (!await JS.InvokeAsync<bool>("canRegisterPushVapid"))
+            {
+                Fail("This browser can't receive push notifications.");
+                return;
+            }
+
+            if (await JS.InvokeAsync<bool>("registerPushSubscription", vapidPublic))
+            {
+                pushDevices = Db.PushSubscriptions.AsNoTracking()
+                    .Where(x => x.UserId == currentUser.Id)
+                    .OrderByDescending(x => x.CreatedAt)
+                    .ToList();
+                Ok("This device is registered for push notifications.");
+            }
+            else
+            {
+                Fail("Could not register this device. Allow notifications for this site and try again.");
+            }
+        }
+        catch (JSException)
+        {
+            Fail("Could not register this device. Allow notifications for this site and try again.");
+        }
+        finally
+        {
+            registeringDevice = false;
         }
     }
 

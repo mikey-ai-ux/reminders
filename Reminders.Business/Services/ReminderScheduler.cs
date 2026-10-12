@@ -61,7 +61,8 @@ public class ReminderScheduler : BackgroundService
             .Include(r => r.Channels)
             .Include(r => r.Targets)
             .Include(r => r.User)
-            .Where(r => r.IsActive && !r.IsPaused && r.OccursAt <= now)
+            .Where(r => !r.IsPaused
+                && ((r.IsActive && r.OccursAt <= now) || (r.SnoozedUntil != null && r.SnoozedUntil <= now)))
             .AsSplitQuery()
             .ToListAsync(ct);
 
@@ -97,20 +98,27 @@ public class ReminderScheduler : BackgroundService
 
             reminder.LastNotifiedAt = now;
 
-            // Jump straight to the next future occurrence: a reminder that was due while the app
-            // was down fires once, not once per missed occurrence.
-            var next = RecurrenceCalculator.GetNextOccurrenceUtc(
-                reminder.OccursAt, reminder.RecurringInterval, reminder.TimeZoneId, now, reminder.RecurrenceAnchorDay);
+            // A snooze is a one-off repeat: it fires once and leaves the regular schedule alone.
+            if (reminder.SnoozedUntil != null && reminder.SnoozedUntil <= now)
+                reminder.SnoozedUntil = null;
 
-            if (next.HasValue)
+            if (reminder.IsActive && reminder.OccursAt <= now)
             {
-                reminder.OccursAt = next.Value;
-            }
-            else
-            {
-                if (RecurrenceCalculator.IsRecurring(reminder.RecurringInterval))
-                    _logger.LogWarning("Reminder {ReminderId} has unsupported interval '{Interval}'; deactivating", reminder.Id, reminder.RecurringInterval);
-                reminder.IsActive = false;
+                // Jump straight to the next future occurrence: a reminder that was due while the app
+                // was down fires once, not once per missed occurrence.
+                var next = RecurrenceCalculator.GetNextOccurrenceUtc(
+                    reminder.OccursAt, reminder.RecurringInterval, reminder.TimeZoneId, now, reminder.RecurrenceAnchorDay);
+
+                if (next.HasValue)
+                {
+                    reminder.OccursAt = next.Value;
+                }
+                else
+                {
+                    if (RecurrenceCalculator.IsRecurring(reminder.RecurringInterval))
+                        _logger.LogWarning("Reminder {ReminderId} has unsupported interval '{Interval}'; deactivating", reminder.Id, reminder.RecurringInterval);
+                    reminder.IsActive = false;
+                }
             }
 
             reminder.UpdatedAt = now;
