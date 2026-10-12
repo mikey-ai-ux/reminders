@@ -1,15 +1,23 @@
 @page "/profile/payment-history"
 @attribute [Authorize]
+@using Microsoft.AspNetCore.Identity
+@inject UserManager<AppUser> UserManager
+@inject ISubscriptionService SubSvc
+@inject AuthenticationStateProvider AuthStateProvider
 @rendermode InteractiveServer
 
 <PageTitle>Payment History — Reminders</PageTitle>
 
 <div class="tab-content card">
     <h2>Payment History</h2>
-    @if (payments.Count == 0)
+    @if (isLoading)
+    {
+        <p class="empty-payments">Loading payments…</p>
+    }
+    else if (payments.Count == 0)
     {
         <div class="empty-payments">
-            <p>💳 No payments yet. Upgrade to Pro to unlock all features!</p>
+            <p>No payments yet. Upgrade to a paid plan to unlock SMS and voice reminders.</p>
             <a href="/profile/subscription" class="btn btn-primary">View Plans</a>
         </div>
     }
@@ -31,8 +39,14 @@
                         <tr>
                             <td>@p.Date.ToString("MMM d, yyyy")</td>
                             <td>@p.Description</td>
-                            <td>$@p.Amount.ToString("F2")</td>
-                            <td><span class="status-pill status-@p.Status.ToLower()">@p.Status</span></td>
+                            <td>@p.Amount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) @p.Currency</td>
+                            <td>
+                                <span class="status-pill status-@p.Status.ToLower()">@p.Status</span>
+                                @if (!string.IsNullOrWhiteSpace(p.InvoiceUrl))
+                                {
+                                    <a href="@p.InvoiceUrl" target="_blank" rel="noopener">Invoice</a>
+                                }
+                            </td>
                         </tr>
                     }
                 </tbody>
@@ -58,8 +72,14 @@
 
 @code {
     private List<PaymentRecord> payments = new();
+    private bool isLoading = true;
 
-    // TODO: Load from Stripe API when real credentials provided
-    // For now, show empty state
-    private record PaymentRecord(DateTime Date, string Description, decimal Amount, string Status);
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = await UserManager.GetUserAsync(authState.User);
+        if (user is not null)
+            payments = await SubSvc.GetPaymentHistoryAsync(user);
+        isLoading = false;
+    }
 }

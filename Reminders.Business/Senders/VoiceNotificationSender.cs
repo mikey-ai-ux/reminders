@@ -23,6 +23,11 @@ public class VoiceNotificationSender : IVoiceNotificationSender
 
     public async Task SendAsync(AppUser user, Reminder reminder)
     {
+        // Fail fast instead of calling Twilio with placeholder credentials.
+        if (string.IsNullOrWhiteSpace(_settings.AccountSid) || string.IsNullOrWhiteSpace(_settings.AuthToken)
+            || _settings.AccountSid.Contains("YOUR_", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("SMS/voice delivery is not configured (Twilio settings).");
+
         var phone = user.PhoneNumber;
         if (string.IsNullOrWhiteSpace(phone))
         {

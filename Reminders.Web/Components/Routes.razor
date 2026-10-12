@@ -10,7 +10,12 @@
     <NotFound>
         <PageTitle>Not found</PageTitle>
         <LayoutView Layout="typeof(Layout.MainLayout)">
-            <p role="alert">Sorry, there's nothing at this address.</p>
+            <div class="empty-state" role="alert">
+                <div class="empty-icon"><Icon Name="search" Size="30" Stroke="1.8" /></div>
+                <h2>Page not found</h2>
+                <p>There's nothing at this address.</p>
+                <a href="/" class="btn btn-primary">Go home</a>
+            </div>
         </LayoutView>
     </NotFound>
 </Router>

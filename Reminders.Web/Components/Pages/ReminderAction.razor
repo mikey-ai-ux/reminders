@@ -1,0 +1,85 @@
+@page "/r/{Token}"
+@inject ReminderActionLinks Links
+@inject IReminderService ReminderSvc
+
+@* Opened from a notification (email link or tapping a push). The signed token in the address
+   identifies the reminder, so this works without being signed in. Server-rendered: plain form posts. *@
+
+<PageTitle>Reminder — Reminders</PageTitle>
+
+<div class="auth-container">
+    <div class="auth-card">
+        @if (reminder is null)
+        {
+            <div class="auth-header">
+                <div class="auth-icon"><Icon Name="alert-triangle" Size="26" /></div>
+                <h1>This link no longer works</h1>
+                <p>Notification links expire after a week, and stop working if the reminder was deleted.</p>
+            </div>
+            <a href="/reminders" class="btn btn-primary btn-full">Open my reminders</a>
+        }
+        else
+        {
+            <div class="auth-header">
+                <div class="auth-icon"><Icon Name="@Icons.ForReminder(reminder.Icon)" Size="26" /></div>
+                <h1>@reminder.Name</h1>
+                @if (!string.IsNullOrWhiteSpace(reminder.Description))
+                {
+                    <p>@reminder.Description</p>
+                }
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(ResultMessage))
+            {
+                <div class="alert alert-success"><Icon Name="check-circle" Size="16" /> @ResultMessage</div>
+            }
+            else if (reminder.SnoozedUntil is { } snoozed && snoozed > DateTime.UtcNow)
+            {
+                <div class="alert alert-info"><Icon Name="clock" Size="16" /> Snoozed: we'll remind you again @TimeText.DayInline(snoozed, reminder.TimeZoneId, DateTime.UtcNow).</div>
+            }
+
+            <div class="action-label">Remind me again</div>
+            <div class="action-grid">
+                @foreach (var option in SnoozeOptions)
+                {
+                    <form method="post" action="/api/reminder-actions/@Token/snooze?minutes=@option.Minutes">
+                        <button type="submit" class="btn btn-secondary btn-full"><Icon Name="clock" Size="15" /> @option.Label</button>
+                    </form>
+                }
+            </div>
+
+            <form method="post" action="/api/reminder-actions/@Token/done" class="action-done">
+                <button type="submit" class="btn btn-primary btn-full"><Icon Name="check" Size="16" Stroke="2.6" /> Mark as done</button>
+            </form>
+
+            <p class="auth-footer"><a href="/reminders">Open my reminders</a></p>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Token { get; set; } = string.Empty;
+
+    [SupplyParameterFromQuery(Name = "result")]
+    public string? Result { get; set; }
+
+    private Reminder? reminder;
+
+    private static readonly (int Minutes, string Label)[] SnoozeOptions =
+        [(10, "In 10 minutes"), (60, "In 1 hour"), (180, "In 3 hours"), (1440, "Tomorrow, same time")];
+
+    private string? ResultMessage => Result switch
+    {
+        "done" => "Marked as done.",
+        "snoozed" => reminder?.SnoozedUntil is { } until
+            ? $"Snoozed. We'll remind you again {TimeText.DayInline(until, reminder.TimeZoneId, DateTime.UtcNow)}."
+            : "Snoozed.",
+        _ => null
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Links.TryReadToken(Token, out var id, out var userId))
+            reminder = await ReminderSvc.GetForActionAsync(id, userId);
+    }
+}

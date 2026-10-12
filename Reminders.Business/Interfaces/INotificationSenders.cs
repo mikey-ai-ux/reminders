@@ -19,5 +19,6 @@ public interface IVoiceNotificationSender
 
 public interface IPushNotificationSender
 {
-    Task SendAsync(AppUser user, Reminder reminder);
+    /// <summary>Returns how many devices the notification was delivered to.</summary>
+    Task<int> SendAsync(AppUser user, Reminder reminder, IEnumerable<string>? endpointFilter = null);
 }

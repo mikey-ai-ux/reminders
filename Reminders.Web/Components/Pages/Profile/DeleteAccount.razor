@@ -1,0 +1,119 @@
+@page "/profile/delete"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Identity
+@inject UserManager<AppUser> UserManager
+@inject SignInManager<AppUser> SignInManager
+@inject ISubscriptionService SubSvc
+@inject NavigationManager Nav
+@inject ILogger<DeleteAccount> Logger
+
+@* Server-rendered on purpose: deleting the account signs the user out, which needs a normal HTTP response. *@
+
+<PageTitle>Delete account — Reminders</PageTitle>
+
+<div class="auth-container">
+    <div class="auth-card">
+        <div class="auth-header">
+            <div class="auth-icon auth-icon-danger"><Icon Name="trash" Size="26" /></div>
+            <h1>Delete your account</h1>
+            <p>This permanently deletes your account, all your reminders, their history, your registered devices and extra contact details. It cannot be undone.</p>
+        </div>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-error" role="alert"><Icon Name="alert-triangle" Size="16" /> @errorMessage</div>
+        }
+
+        @if (hasSubscription)
+        {
+            <div class="alert alert-info"><Icon Name="info" Size="16" /> Your paid subscription will be cancelled as part of this.</div>
+        }
+
+        <EditForm Model="model" OnValidSubmit="HandleSubmit" FormName="delete-account">
+            <div class="form-group">
+                @if (hasPassword)
+                {
+                    <label for="delete-confirm">Enter your password to confirm</label>
+                    <InputText id="delete-confirm" @bind-Value="model.Confirmation" type="password" class="form-input" autocomplete="current-password" />
+                }
+                else
+                {
+                    <label for="delete-confirm">Type your email address (@email) to confirm</label>
+                    <InputText id="delete-confirm" @bind-Value="model.Confirmation" type="email" class="form-input" autocomplete="off" />
+                }
+            </div>
+            <button type="submit" class="btn btn-danger btn-full">Delete my account permanently</button>
+        </EditForm>
+
+        <p class="auth-footer"><a href="/profile">Cancel, keep my account</a></p>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    [SupplyParameterFromForm]
+    private DeleteModel model { get; set; } = new();
+
+    private AppUser? user;
+    private bool hasPassword = true;
+    private bool hasSubscription;
+    private string? email;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (HttpContext is null) return;
+        user = await UserManager.GetUserAsync(HttpContext.User);
+        if (user is null) return;
+
+        hasPassword = await UserManager.HasPasswordAsync(user);
+        hasSubscription = !string.IsNullOrWhiteSpace(user.StripeSubscriptionId);
+        email = user.Email;
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (user is null)
+        {
+            errorMessage = "Your session has expired. Please sign in again.";
+            return;
+        }
+
+        var confirmation = model.Confirmation ?? string.Empty;
+        var confirmed = hasPassword
+            ? confirmation.Length > 0 && await UserManager.CheckPasswordAsync(user, confirmation)
+            : string.Equals(confirmation.Trim(), user.Email, StringComparison.OrdinalIgnoreCase);
+
+        if (!confirmed)
+        {
+            errorMessage = hasPassword ? "That password is not correct." : "That doesn't match your email address.";
+            return;
+        }
+
+        // Never leave someone paying for an account that no longer exists.
+        if (!await SubSvc.CancelSubscriptionAsync(user))
+        {
+            errorMessage = "Your paid subscription could not be cancelled, so the account was not deleted. Please try again later or cancel the subscription first.";
+            return;
+        }
+
+        var userId = user.Id;
+        var result = await UserManager.DeleteAsync(user);
+        if (!result.Succeeded)
+        {
+            errorMessage = string.Join(" ", result.Errors.Select(e => e.Description));
+            return;
+        }
+
+        Logger.LogInformation("User {UserId} deleted their account", userId);
+        await SignInManager.SignOutAsync();
+        Nav.NavigateTo("/?account=deleted");
+    }
+
+    private sealed class DeleteModel
+    {
+        public string? Confirmation { get; set; }
+    }
+}

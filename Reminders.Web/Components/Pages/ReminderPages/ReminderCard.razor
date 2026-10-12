@@ -1,107 +1,103 @@
-
-<div class="reminder-card @(Reminder.IsPaused ? "paused" : "") @(!Reminder.IsActive ? "inactive" : "")">
-    <div class="card-header">
-        <div class="card-title-row">
-            <h3 class="card-title">@Reminder.Name</h3>
-            <span class="status-badge @(Reminder.IsPaused ? "badge-paused" : Reminder.IsActive ? "badge-active" : "badge-inactive")">
-                @(Reminder.IsPaused ? "Paused" : Reminder.IsActive ? "Active" : "Inactive")
-            </span>
-        </div>
-        @if (!string.IsNullOrEmpty(Reminder.Description))
+<article class="reminder-card @StateClass">
+    <div class="rc-icon">
+        @if (!string.IsNullOrWhiteSpace(Reminder.CustomIconUrl))
         {
-            <p class="card-desc">@Reminder.Description</p>
-        }
-    </div>
-
-    <div class="card-meta">
-        <div class="meta-item">
-            <span class="meta-icon">🕐</span>
-            <span>@FormatOccursAt()</span>
-        </div>
-        @if (Reminder.RecurringInterval != "None")
-        {
-            <div class="meta-item">
-                <span class="meta-icon">🔁</span>
-                <span>@Reminder.RecurringInterval</span>
-            </div>
-        }
-        <div class="meta-item">
-            <span class="meta-icon">🌍</span>
-            <span>@Reminder.TimeZoneId</span>
-        </div>
-    </div>
-
-    @if (Reminder.Channels.Any())
-    {
-        <div class="channel-badges">
-            @foreach (var ch in Reminder.Channels)
-            {
-                <span class="channel-badge channel-@ch.Channel.ToString().ToLower()">
-                    @GetChannelEmoji(ch.Channel) @ch.Channel
-                </span>
-            }
-        </div>
-    }
-
-    <div class="card-actions">
-        <button class="btn btn-sm btn-ghost" @onclick="() => OnEdit.InvokeAsync(Reminder)">✏️ Edit</button>
-        @if (Reminder.IsPaused)
-        {
-            <button class="btn btn-sm btn-ghost" @onclick="() => OnResume.InvokeAsync(Reminder.Id)">▶️ Resume</button>
+            <img src="@Reminder.CustomIconUrl" alt="" loading="lazy" referrerpolicy="no-referrer" />
         }
         else
         {
-            <button class="btn btn-sm btn-ghost" @onclick="() => OnPause.InvokeAsync(Reminder.Id)">⏸️ Pause</button>
+            <Icon Name="@Icons.ForReminder(Reminder.Icon)" Size="20" />
         }
-        <button class="btn btn-sm btn-danger-ghost" @onclick="() => OnDelete.InvokeAsync(Reminder.Id)">🗑️ Delete</button>
     </div>
-</div>
 
-<style>
-.reminder-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; transition: box-shadow 0.2s; }
-.reminder-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
-.reminder-card.paused { opacity: 0.75; }
-.card-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
-.card-title { font-size: 1rem; font-weight: 700; color: var(--color-text); margin: 0; }
-.card-desc { font-size: 0.85rem; color: var(--color-text-muted); margin: 0.25rem 0 0; }
-.status-badge { font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 20px; white-space: nowrap; flex-shrink: 0; }
-.badge-active { background: rgba(34,197,94,0.15); color: #22c55e; }
-.badge-paused { background: rgba(234,179,8,0.15); color: #eab308; }
-.badge-inactive { background: var(--color-border); color: var(--color-text-muted); }
-.card-meta { display: flex; flex-direction: column; gap: 0.35rem; }
-.meta-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.825rem; color: var(--color-text-muted); }
-.meta-icon { font-size: 0.875rem; }
-.channel-badges { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-.channel-badge { font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 20px; border: 1px solid var(--color-border); color: var(--color-text-muted); }
-.card-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; border-top: 1px solid var(--color-border); padding-top: 0.75rem; }
-</style>
+    <div class="rc-body">
+        <div class="rc-title-row">
+            <h3 class="rc-title">@Reminder.Name</h3>
+            <span class="status-badge @BadgeClass">@StatusText</span>
+        </div>
+
+        @if (!string.IsNullOrEmpty(Reminder.Description))
+        {
+            <p class="rc-desc">@Reminder.Description</p>
+        }
+
+        <div class="rc-when">
+            <Icon Name="clock" Size="15" />
+            <span class="rc-when-main">@TimeText.Day(Reminder.OccursAt, Reminder.TimeZoneId, DateTime.UtcNow)</span>
+            @if (Reminder.IsActive && !Reminder.IsPaused)
+            {
+                <span class="rc-when-rel">@TimeText.Relative(Reminder.OccursAt, DateTime.UtcNow)</span>
+            }
+        </div>
+
+        @if (IsSnoozed)
+        {
+            <div class="rc-snooze"><Icon Name="clock" Size="14" /> Snoozed: reminding you again @TimeText.DayInline(Reminder.SnoozedUntil!.Value, Reminder.TimeZoneId, DateTime.UtcNow) (@TimeText.Relative(Reminder.SnoozedUntil.Value, DateTime.UtcNow))</div>
+        }
+
+        <div class="rc-meta">
+            <span class="chip" title="@(IsRecurring ? "Repeats" : "Happens once")"><Icon Name="@(IsRecurring ? "repeat" : "calendar")" Size="13" /> @TimeText.Recurrence(Reminder.RecurringInterval)</span>
+            @if (!string.Equals(Reminder.TimeZoneId, "UTC", StringComparison.OrdinalIgnoreCase) || ShowTimeZone)
+            {
+                <span class="chip" title="Timezone"><Icon Name="globe" Size="13" /> @Reminder.TimeZoneId</span>
+            }
+            @foreach (var grp in Reminder.Targets.GroupBy(t => t.Channel))
+            {
+                <span class="chip" title="@string.Join(", ", grp.Select(x => string.IsNullOrWhiteSpace(x.Label) ? x.TargetValue : x.Label))">
+                    <Icon Name="@Icons.ForChannel(grp.Key)" Size="13" /> @grp.Key@(grp.Count() > 1 ? $" ×{grp.Count()}" : "")
+                </span>
+            }
+            @if (!Reminder.Channels.Any())
+            {
+                <span class="chip chip-warn" title="No notification channel is selected, so this only appears in your calendar feed"><Icon Name="alert-triangle" Size="13" /> No notification</span>
+            }
+        </div>
+    </div>
+
+    <div class="rc-actions">
+        @if (Reminder.IsActive || IsSnoozed)
+        {
+            <button class="icon-btn success" @onclick="() => OnDone.InvokeAsync(Reminder.Id)" title="@DoneTitle" aria-label="@DoneTitle: @Reminder.Name"><Icon Name="check" Size="17" Stroke="2.4" /><span>Done</span></button>
+        }
+        @if (IsExpiredOneTime)
+        {
+            @* nothing to pause or resume once a one-time reminder has passed *@
+        }
+        else if (Reminder.IsPaused)
+        {
+            <button class="icon-btn" @onclick="() => OnResume.InvokeAsync(Reminder.Id)" title="Resume" aria-label="Resume @Reminder.Name"><Icon Name="play" Size="16" /><span>Resume</span></button>
+        }
+        else if (!Reminder.IsActive)
+        {
+            <button class="icon-btn" @onclick="() => OnResume.InvokeAsync(Reminder.Id)" title="Activate" aria-label="Activate @Reminder.Name"><Icon Name="play" Size="16" /><span>Activate</span></button>
+        }
+        else
+        {
+            <button class="icon-btn" @onclick="() => OnPause.InvokeAsync(Reminder.Id)" title="Pause" aria-label="Pause @Reminder.Name"><Icon Name="pause" Size="16" /><span>Pause</span></button>
+        }
+        <button class="icon-btn" @onclick="() => OnEdit.InvokeAsync(Reminder)" title="Edit" aria-label="Edit @Reminder.Name"><Icon Name="pencil" Size="16" /><span>Edit</span></button>
+        <button class="icon-btn" @onclick="() => OnDuplicate.InvokeAsync(Reminder)" title="Duplicate" aria-label="Duplicate @Reminder.Name"><Icon Name="copy" Size="16" /><span>Duplicate</span></button>
+        <button class="icon-btn danger" @onclick="() => OnDelete.InvokeAsync(Reminder.Id)" title="Delete" aria-label="Delete @Reminder.Name"><Icon Name="trash" Size="16" /><span>Delete</span></button>
+    </div>
+</article>
 
 @code {
     [Parameter] public required Reminder Reminder { get; set; }
-    [Parameter] public AppUser? CurrentUser { get; set; }
+    [Parameter] public bool ShowTimeZone { get; set; }
     [Parameter] public EventCallback<Reminder> OnEdit { get; set; }
     [Parameter] public EventCallback<int> OnPause { get; set; }
     [Parameter] public EventCallback<int> OnResume { get; set; }
+    [Parameter] public EventCallback<Reminder> OnDuplicate { get; set; }
     [Parameter] public EventCallback<int> OnDelete { get; set; }
+    [Parameter] public EventCallback<int> OnDone { get; set; }
 
-    private string FormatOccursAt()
-    {
-        try
-        {
-            var tz = TimeZoneInfo.FindSystemTimeZoneById(Reminder.TimeZoneId);
-            var local = TimeZoneInfo.ConvertTimeFromUtc(Reminder.OccursAt, tz);
-            return local.ToString("ddd, MMM d yyyy h:mm tt");
-        }
-        catch { return Reminder.OccursAt.ToString("ddd, MMM d yyyy h:mm tt") + " UTC"; }
-    }
+    private bool IsSnoozed => Reminder.SnoozedUntil is { } until && until > DateTime.UtcNow;
+    private string DoneTitle => IsRecurring && Reminder.IsActive ? "Done for this time (skips to the next one)" : "Mark as done";
 
-    private string GetChannelEmoji(NotificationChannel ch) => ch switch
-    {
-        NotificationChannel.Email => "📧",
-        NotificationChannel.Push => "🔔",
-        NotificationChannel.SMS => "📱",
-        NotificationChannel.Voice => "📞",
-        _ => "🔔"
-    };
+    private bool IsRecurring => RecurrenceCalculator.IsRecurring(Reminder.RecurringInterval);
+    private bool IsExpiredOneTime => !IsRecurring && Reminder.OccursAt <= DateTime.UtcNow;
+
+    private string StatusText => Reminder.IsPaused ? "Paused" : Reminder.IsActive ? "Active" : IsSnoozed ? "Snoozed" : IsExpiredOneTime ? "Done" : "Inactive";
+    private string BadgeClass => Reminder.IsPaused || (!Reminder.IsActive && IsSnoozed) ? "badge-paused" : Reminder.IsActive ? "badge-active" : "badge-inactive";
+    private string StateClass => Reminder.IsPaused ? "paused" : Reminder.IsActive || IsSnoozed ? "" : "inactive";
 }
-

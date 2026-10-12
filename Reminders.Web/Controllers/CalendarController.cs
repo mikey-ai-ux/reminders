@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Identity;
 using Reminders.Business.Interfaces;
+using Reminders.Business.Services;
 using Reminders.Models;
 
 namespace Reminders.Web.Controllers;
@@ -54,8 +55,10 @@ public class CalendarController : ControllerBase
         foreach (var reminder in reminders)
         {
             var uid = $"{reminder.Id}@reminders-app";
-            var dtStart = reminder.OccursAt.ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'");
-            var dtEnd = reminder.OccursAt.ToUniversalTime().AddMinutes(30).ToString("yyyyMMdd'T'HHmmss'Z'");
+            // Stored times are UTC but come back from the database without a kind; ToUniversalTime() would shift them by the server's offset.
+            var occursAtUtc = DateTime.SpecifyKind(reminder.OccursAt, DateTimeKind.Utc);
+            var dtStart = occursAtUtc.ToString("yyyyMMdd'T'HHmmss'Z'");
+            var dtEnd = occursAtUtc.AddMinutes(30).ToString("yyyyMMdd'T'HHmmss'Z'");
             var dtStamp = now.ToString("yyyyMMdd'T'HHmmss'Z'");
             var summary = EscapeIcs(reminder.Name);
             var description = EscapeIcs(reminder.Description ?? "");
@@ -75,19 +78,43 @@ public class CalendarController : ControllerBase
             sb.AppendLine($"DESCRIPTION:{summary}");
             sb.AppendLine("END:VALARM");
 
-            // Handle recurrence via RecurringInterval string
-            if (reminder.RecurringInterval == "Daily")
-                sb.AppendLine("RRULE:FREQ=DAILY");
-            else if (reminder.RecurringInterval == "Weekly")
-                sb.AppendLine("RRULE:FREQ=WEEKLY");
-            else if (reminder.RecurringInterval == "Monthly")
-                sb.AppendLine("RRULE:FREQ=MONTHLY");
+            var rrule = BuildRecurrenceRule(reminder);
+            if (rrule != null)
+                sb.AppendLine(rrule);
 
             sb.AppendLine("END:VEVENT");
         }
 
         sb.AppendLine("END:VCALENDAR");
-        return sb.ToString();
+
+        // iCalendar requires CRLF line endings whatever OS the server runs on.
+        return sb.ToString().Replace("\r\n", "\n").Replace("\n", "\r\n");
+    }
+
+    private static string? BuildRecurrenceRule(Reminder reminder)
+    {
+        var days = RecurrenceCalculator.ParseCustomDays(reminder.RecurringInterval);
+        if (days.Count > 0)
+        {
+            // Times are published in UTC, so use the weekday each occurrence falls on in UTC.
+            var tz = RecurrenceCalculator.ResolveTimeZone(reminder.TimeZoneId);
+            var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(reminder.OccursAt, DateTimeKind.Utc), tz);
+            var shift = (int)(reminder.OccursAt.Date - local.Date).TotalDays;
+            var byDay = days
+                .Select(d => (DayOfWeek)((((int)d + shift) % 7 + 7) % 7))
+                .OrderBy(d => (int)d)
+                .Select(d => d.ToString()[..2].ToUpperInvariant());
+            return "RRULE:FREQ=WEEKLY;BYDAY=" + string.Join(",", byDay);
+        }
+
+        return reminder.RecurringInterval switch
+        {
+            RecurrenceCalculator.Daily => "RRULE:FREQ=DAILY",
+            RecurrenceCalculator.Weekly => "RRULE:FREQ=WEEKLY",
+            RecurrenceCalculator.Monthly => "RRULE:FREQ=MONTHLY",
+            RecurrenceCalculator.Annually => "RRULE:FREQ=YEARLY",
+            _ => null
+        };
     }
 
     private static string EscapeIcs(string value) =>

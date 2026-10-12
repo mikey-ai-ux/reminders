@@ -1,0 +1,197 @@
+@page "/history"
+@attribute [Authorize]
+@using Microsoft.AspNetCore.Identity
+@inject IReminderService ReminderSvc
+@inject UserManager<AppUser> UserManager
+@inject AuthenticationStateProvider AuthStateProvider
+@rendermode InteractiveServer
+
+<PageTitle>Notification History</PageTitle>
+
+<div class="page-head">
+    <div>
+        <h1>History</h1>
+        <p class="page-subtitle">Every notification we sent, or tried to send.</p>
+    </div>
+</div>
+
+<div class="card">
+    <div class="filters">
+        <div class="list-search">
+            <Icon Name="search" Size="16" />
+            <input placeholder="Search name or message" aria-label="Search history" value="@search" @oninput="OnSearchInput" />
+        </div>
+        <select class="form-input" aria-label="Channel" value="@channelFilter" @onchange="e => SetFilter(ref channelFilter, e)">
+            <option value="">All channels</option>
+            @foreach (var ch in Enum.GetValues<NotificationChannel>())
+            {
+                <option value="@ch">@ch</option>
+            }
+        </select>
+        <select class="form-input" aria-label="Status" value="@statusFilter" @onchange="e => SetFilter(ref statusFilter, e)">
+            <option value="">All statuses</option>
+            <option value="@NotificationStatus.Sent">Sent</option>
+            <option value="@NotificationStatus.Failed">Failed</option>
+        </select>
+        <select class="form-input" aria-label="Sort" value="@sortBy" @onchange="e => SetFilter(ref sortBy, e)">
+            <option value="sent_desc">Newest first</option>
+            <option value="sent_asc">Oldest first</option>
+            <option value="channel_asc">By channel</option>
+            <option value="status_asc">By status</option>
+        </select>
+    </div>
+
+    <div class="table-wrap @(isLoading ? "is-loading" : "")">
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>Reminder</th>
+                    <th>Channel</th>
+                    <th>Status</th>
+                    <th>Scheduled</th>
+                    <th>Sent</th>
+                    <th>Message</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (result is null)
+                {
+                    <tr><td colspan="6" class="empty">Loading…</td></tr>
+                }
+                else if (result.Items.Count == 0)
+                {
+                    <tr><td colspan="6" class="empty">@(HasFilters ? "Nothing matches these filters." : "No notifications yet. They appear here once a reminder fires.")</td></tr>
+                }
+                else
+                {
+                    @foreach (var n in result.Items)
+                    {
+                        <tr>
+                            <td class="strong">@n.ReminderName</td>
+                            <td>
+                                <span class="chip"><Icon Name="@Icons.ForChannel(n.Channel)" Size="13" /> @n.Channel</span>
+                                @if (n.Channel == NotificationChannel.Push && !string.IsNullOrWhiteSpace(n.DeviceType))
+                                {
+                                    <div class="sub">@n.DeviceType</div>
+                                }
+                            </td>
+                            <td><span class="badge @(n.Status == NotificationStatus.Sent ? "badge-active" : n.Status == NotificationStatus.Failed ? "badge-failed" : "badge-inactive")">@n.Status</span></td>
+                            <td>@FormatUtc(n.ScheduledForUtc, n.TimeZoneId)<div class="sub">@n.TimeZoneId</div></td>
+                            <td>@(n.SentAt.HasValue ? FormatUtc(n.SentAt.Value, n.TimeZoneId) : "—")</td>
+                            <td class="msg">@n.MessageSnapshot</td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (result is { TotalCount: > 0 })
+    {
+        <div class="pager">
+            <span class="pager-info">@RangeText</span>
+            <div class="pager-buttons">
+                <button class="btn btn-sm btn-secondary" disabled="@(result.Page <= 1 || isLoading)" @onclick="() => GoToPage(result.Page - 1)">Previous</button>
+                <span class="pager-page">Page @result.Page of @result.TotalPages</span>
+                <button class="btn btn-sm btn-secondary" disabled="@(result.Page >= result.TotalPages || isLoading)" @onclick="() => GoToPage(result.Page + 1)">Next</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private const int PageSize = 25;
+
+    private string? userId;
+    private NotificationHistoryPage? result;
+    private bool isLoading;
+
+    private string search = string.Empty;
+    private string channelFilter = string.Empty;
+    private string statusFilter = string.Empty;
+    private string sortBy = "sent_desc";
+    private CancellationTokenSource? searchDelay;
+    // The page shares one database context; never run two queries on it at once.
+    private readonly SemaphoreSlim gate = new(1, 1);
+
+    private bool HasFilters => !string.IsNullOrWhiteSpace(search) || channelFilter.Length > 0 || statusFilter.Length > 0;
+
+    private string RangeText
+    {
+        get
+        {
+            if (result is null || result.TotalCount == 0) return string.Empty;
+            var first = (result.Page - 1) * result.PageSize + 1;
+            var last = first + result.Items.Count - 1;
+            return $"{first:N0}–{last:N0} of {result.TotalCount:N0}";
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await AuthStateProvider.GetAuthenticationStateAsync();
+        userId = (await UserManager.GetUserAsync(auth.User))?.Id;
+        await LoadAsync(1);
+    }
+
+    // Only one page of rows is ever loaded; filtering and sorting happen in the database.
+    private async Task LoadAsync(int pageNumber)
+    {
+        if (userId is null) return;
+        await gate.WaitAsync();
+        isLoading = true;
+        try
+        {
+            result = await ReminderSvc.GetNotificationHistoryPageAsync(userId, new NotificationHistoryQuery
+            {
+                Search = search,
+                Channel = Enum.TryParse<NotificationChannel>(channelFilter, out var ch) ? ch : null,
+                Status = Enum.TryParse<NotificationStatus>(statusFilter, out var st) ? st : null,
+                Sort = sortBy,
+                Page = pageNumber,
+                PageSize = PageSize
+            });
+        }
+        finally
+        {
+            isLoading = false;
+            gate.Release();
+        }
+    }
+
+    private Task GoToPage(int pageNumber) => LoadAsync(pageNumber);
+
+    private Task SetFilter(ref string field, ChangeEventArgs e)
+    {
+        field = e.Value?.ToString() ?? string.Empty;
+        return LoadAsync(1);
+    }
+
+    // Wait for a pause in typing before querying.
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        search = e.Value?.ToString() ?? string.Empty;
+        searchDelay?.Cancel();
+        var delay = searchDelay = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(300, delay.Token);
+            await LoadAsync(1);
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private static string FormatUtc(DateTime utc, string tzId)
+    {
+        try
+        {
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(string.IsNullOrWhiteSpace(tzId) ? "UTC" : tzId);
+            var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), tz);
+            return local.ToString("MMM d, yyyy h:mm tt", System.Globalization.CultureInfo.GetCultureInfo("en-US"));
+        }
+        catch
+        {
+            return utc.ToString("yyyy-MM-dd HH:mm") + " UTC";
+        }
+    }
+}

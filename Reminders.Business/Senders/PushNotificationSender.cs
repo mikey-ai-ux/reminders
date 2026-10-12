@@ -15,42 +15,61 @@ public class PushNotificationSender : IPushNotificationSender
     private readonly VapidSettings _vapid;
     private readonly AppDbContext _db;
     private readonly ILogger<PushNotificationSender> _logger;
+    private readonly IReminderActionLinks? _links;
 
-    public PushNotificationSender(IOptions<VapidSettings> vapid, AppDbContext db, ILogger<PushNotificationSender> logger)
+    public PushNotificationSender(IOptions<VapidSettings> vapid, AppDbContext db, ILogger<PushNotificationSender> logger, IReminderActionLinks? links = null)
     {
         _vapid = vapid.Value;
         _db = db;
         _logger = logger;
+        _links = links;
     }
 
-    public async Task SendAsync(AppUser user, Reminder reminder)
+    public async Task<int> SendAsync(AppUser user, Reminder reminder, IEnumerable<string>? endpointFilter = null)
     {
-        var subscriptions = await _db.PushSubscriptions
+        var query = _db.PushSubscriptions
             .AsNoTracking()
-            .Where(s => s.UserId == user.Id)
-            .ToListAsync();
+            .Where(s => s.UserId == user.Id);
+
+        if (endpointFilter != null)
+        {
+            var endpoints = endpointFilter.Where(e => !string.IsNullOrWhiteSpace(e)).Distinct().ToList();
+            if (endpoints.Count > 0)
+                query = query.Where(s => endpoints.Contains(s.Endpoint));
+        }
+
+        var subscriptions = await query.ToListAsync();
 
         if (!subscriptions.Any())
         {
             _logger.LogInformation("No push subscriptions for user {UserId}", user.Id);
-            return;
+            return 0;
         }
 
         var payload = JsonSerializer.Serialize(new
         {
-            title = $"⏰ {reminder.Name}",
+            title = reminder.Name,
             body = string.IsNullOrWhiteSpace(reminder.Description)
                 ? $"Reminder: {reminder.Name}"
                 : reminder.Description,
             icon = "/icon-192.png",
             badge = "/badge-72.png",
-            url = "/reminders"
+            tag = $"reminder-{reminder.Id}",
+            // Tapping the notification opens the snooze/done page; the two buttons act without opening anything.
+            url = _links?.ActionPagePath(reminder) ?? "/reminders",
+            snoozeUrl = _links?.SnoozePath(reminder, 10),
+            doneUrl = _links?.DonePath(reminder)
         });
+
+        if (string.IsNullOrWhiteSpace(_vapid.PublicKey) || string.IsNullOrWhiteSpace(_vapid.PrivateKey)
+            || _vapid.PublicKey.Contains("YOUR_", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Push delivery is not configured (Vapid settings).");
 
         var client = new WebPushClient();
         client.SetVapidDetails(_vapid.Subject, _vapid.PublicKey, _vapid.PrivateKey);
 
         var staleIds = new List<int>();
+        var delivered = 0;
 
         foreach (var sub in subscriptions)
         {
@@ -58,9 +77,10 @@ public class PushNotificationSender : IPushNotificationSender
             {
                 var pushSub = new PushSubscription(sub.Endpoint, sub.P256dh, sub.Auth);
                 await client.SendNotificationAsync(pushSub, payload);
+                delivered++;
                 _logger.LogInformation("Push notification sent to user {UserId} endpoint {Endpoint}", user.Id, sub.Endpoint);
             }
-            catch (WebPushException ex) when ((int)ex.StatusCode == 410)
+            catch (WebPushException ex) when ((int)ex.StatusCode is 404 or 410)
             {
                 _logger.LogInformation("Stale push subscription {Id} for user {UserId} — removing", sub.Id, user.Id);
                 staleIds.Add(sub.Id);
@@ -77,5 +97,7 @@ public class PushNotificationSender : IPushNotificationSender
             _db.PushSubscriptions.RemoveRange(toRemove);
             await _db.SaveChangesAsync();
         }
+
+        return delivered;
     }
 }
